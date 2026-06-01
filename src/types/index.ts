@@ -1,0 +1,133 @@
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  role: 'admin' | 'manager' | 'viewer';
+  avatar?: string;
+  createdAt: string;
+}
+
+export interface AuthState {
+  user: User | null;
+  token: string | null;
+  isAuthenticated: boolean;
+}
+
+export interface Category {
+  id: string;
+  name: string;
+  slug: string;
+  subcategories: Subcategory[];
+}
+
+export interface Subcategory {
+  id: string;
+  name: string;
+  slug: string;
+  categoryId: string;
+}
+
+export interface Brand {
+  id: string;
+  name: string;
+  slug: string;
+  logo?: string;
+}
+
+export interface ProductVariant {
+  id: string;
+  productId: string;
+  size: string;
+  color: string;
+  colorHex: string;
+  sku: string;
+  quantity: number;
+  costPrice: number;
+  salePrice: number;
+}
+
+export type ProductStatus = 'active' | 'inactive' | 'archived';
+
+export interface Product {
+  id: string;
+  name: string;
+  sku: string;
+  brandId: string;
+  brand?: Brand;
+  categoryId: string;
+  category?: Category;
+  subcategoryId: string;
+  subcategory?: Subcategory;
+  description: string;
+  tags: string[];
+  images: string[];
+  status: ProductStatus;
+  variants: ProductVariant[];
+  totalQuantity: number;
+  costPrice: number;
+  salePrice: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type MovementType = 'entry' | 'exit' | 'adjustment' | 'transfer' | 'return';
+
+export interface StockMovement {
+  id: string;
+  productId: string;
+  product?: Product;
+  variantId?: string;
+  variant?: ProductVariant;
+  type: MovementType;
+  quantity: number;
+  previousQuantity: number;
+  newQuantity: number;
+  reason: string;
+  notes?: string;
+  userId: string;
+  user?: User;
+  createdAt: string;
+}
+
+export interface DashboardStats {
+  totalProducts: number;
+  totalStock: number;
+  lowStockProducts: number;
+  outOfStockProducts: number;
+  totalValue: number;
+  totalSaleValue: number;
+  recentMovements: StockMovement[];
+  topProducts: { product: Product; quantity: number }[];
+  stockByCategory: { category: string; quantity: number; value: number }[];
+  movementsByDay: { date: string; entries: number; exits: number }[];
+}
+
+export interface FilterOptions {
+  search: string;
+  brandId: string;
+  categoryId: string;
+  subcategoryId: string;
+  size: string;
+  color: string;
+  status: ProductStatus | '';
+  minPrice: string;
+  maxPrice: string;
+  stockStatus: 'all' | 'in_stock' | 'low_stock' | 'out_of_stock';
+}
+
+export interface Alert {
+  id: string;
+  type: 'low_stock' | 'out_of_stock' | 'info' | 'warning';
+  message: string;
+  productId?: string;
+  product?: Product;
+  createdAt: string;
+  read: boolean;
+}
+
+export interface StoreConfig {
+  storeName: string;
+  logoUrl?: string;
+  createdAt: string;
+  updatedAt: string;
+}
