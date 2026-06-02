@@ -75,7 +75,7 @@ export function ReportsPage() {
   const exportMovementsCSV = async () => {
     setLoadingReport('movements_csv');
     await new Promise(r => setTimeout(r, 600));
-    const headers = ['ID', 'Produto', 'Tipo', 'Quantidade', 'Estoque Anterior', 'Estoque Novo', 'Motivo', 'Observações', 'Data'];
+    const headers = ['ID', 'Produto', 'Tipo', 'Quantidade', 'Preço Unit.', 'Valor Total', 'Estoque Anterior', 'Estoque Novo', 'Motivo', 'Observações', 'Data'];
     const typeMap: Record<string, string> = {
       entry: 'Entrada', exit: 'Saída', adjustment: 'Ajuste', transfer: 'Transferência', return: 'Devolução'
     };
@@ -84,6 +84,8 @@ export function ReportsPage() {
       m.product?.name || m.productId,
       typeMap[m.type] || m.type,
       String(m.quantity),
+      `R$ ${Number(m.unitPrice || 0).toFixed(2).replace('.', ',')}`,
+      `R$ ${Number(m.totalValue || (Number(m.unitPrice || 0) * m.quantity)).toFixed(2).replace('.', ',')}`,
       String(m.previousQuantity),
       String(m.newQuantity),
       m.reason,
@@ -180,11 +182,13 @@ export function ReportsPage() {
         };
         autoTable(doc, {
           startY: 44,
-          head: [['Produto', 'Tipo', 'Quantidade', 'Anterior', 'Novo', 'Motivo', 'Data']],
+          head: [['Produto', 'Tipo', 'Quantidade', 'Preço Unit.', 'Valor Total', 'Anterior', 'Novo', 'Motivo', 'Data']],
           body: movements.slice(0, 100).map(m => [
             (m.product?.name || m.productId).substring(0, 25),
             typeMap[m.type] || m.type,
             m.quantity,
+            `R$ ${Number(m.unitPrice || 0).toFixed(2)}`,
+            `R$ ${Number(m.totalValue || (Number(m.unitPrice || 0) * m.quantity)).toFixed(2)}`,
             m.previousQuantity,
             m.newQuantity,
             m.reason.substring(0, 30),
@@ -256,6 +260,8 @@ export function ReportsPage() {
           'Produto': m.product?.name || m.productId,
           'Tipo': typeMap[m.type] || m.type,
           'Quantidade': m.quantity,
+          'Preço Unit.': Number(m.unitPrice || 0).toFixed(2),
+          'Valor Total': Number(m.totalValue || (Number(m.unitPrice || 0) * m.quantity)).toFixed(2),
           'Estoque Anterior': m.previousQuantity,
           'Estoque Novo': m.newQuantity,
           'Motivo': m.reason,

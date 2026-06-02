@@ -39,7 +39,8 @@ function getPageFromPath(pathname: string): Page {
   const segments = pathname.split('/').filter(Boolean);
   if (segments.length === 0) return 'dashboard';
   const page = segments[0];
-  if (['dashboard', 'products', 'movements', 'alerts', 'reports', 'brands', 'notifications', 'caixa', 'cashier'].includes(page)) {
+  if (page === 'caixa') return 'cashier';
+  if (['dashboard', 'products', 'movements', 'alerts', 'reports', 'brands', 'notifications', 'cashier'].includes(page)) {
     return page as Page;
   }
   if (page === 'admin' && segments[1] === 'catalogo') {
@@ -67,6 +68,10 @@ function PrivateLayout() {
   const handleNavigate = (page: string) => {
     if (page === 'admin_catalog') {
       navigate('/admin/catalogo');
+      return;
+    }
+    if (page === 'cashier') {
+      navigate('/caixa');
       return;
     }
     const target = page === 'dashboard' ? '/dashboard' : `/${page}`;

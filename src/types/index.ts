@@ -82,6 +82,14 @@ export interface StockMovement {
   quantity: number;
   previousQuantity: number;
   newQuantity: number;
+  // Unit price applied for this movement (sale price per unit)
+  unitPrice?: number;
+  // Cost price per unit at time of movement
+  costPrice?: number;
+  // Total value for this movement (unitPrice * quantity)
+  totalValue?: number;
+  // Snapshot of product name to avoid lookup later
+  productName?: string;
   reason: string;
   notes?: string;
   userId: string;

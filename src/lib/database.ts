@@ -161,6 +161,19 @@ export function createMovement(data: Omit<StockMovement, 'id' | 'createdAt' | 'p
   const product = products[productIndex];
   let previousQuantity = 0;
   let newQuantity = 0;
+  // determine pricing info
+  let unitPrice = product.salePrice || 0;
+  let costPrice = product.costPrice || 0;
+  if (data.variantId) {
+    const variant = product.variants.find(v => v.id === data.variantId);
+    if (variant) {
+      unitPrice = variant.salePrice ?? unitPrice;
+      costPrice = variant.costPrice ?? costPrice;
+    }
+  }
+
+  // validations
+  if (data.quantity <= 0) return null;
 
   if (data.variantId) {
     const variantIndex = product.variants.findIndex(v => v.id === data.variantId);
@@ -170,7 +183,9 @@ export function createMovement(data: Omit<StockMovement, 'id' | 'createdAt' | 'p
     if (data.type === 'entry' || data.type === 'return') {
       newQuantity = previousQuantity + data.quantity;
     } else if (data.type === 'exit') {
-      newQuantity = Math.max(0, previousQuantity - data.quantity);
+      // prevent selling more than available
+      if (data.quantity > previousQuantity) return null;
+      newQuantity = previousQuantity - data.quantity;
     } else if (data.type === 'adjustment') {
       newQuantity = data.quantity;
     }
@@ -181,7 +196,9 @@ export function createMovement(data: Omit<StockMovement, 'id' | 'createdAt' | 'p
     if (data.type === 'entry' || data.type === 'return') {
       newQuantity = previousQuantity + data.quantity;
     } else if (data.type === 'exit') {
-      newQuantity = Math.max(0, previousQuantity - data.quantity);
+      // prevent selling more than total stock
+      if (data.quantity > previousQuantity) return null;
+      newQuantity = previousQuantity - data.quantity;
     } else if (data.type === 'adjustment') {
       newQuantity = data.quantity;
     }
@@ -210,6 +227,12 @@ export function createMovement(data: Omit<StockMovement, 'id' | 'createdAt' | 'p
     previousQuantity,
     newQuantity,
     createdAt: new Date().toISOString(),
+    unitPrice,
+    costPrice,
+    totalValue: Number((unitPrice * data.quantity).toFixed(2)),
+    productName: product.name,
+    product: product,
+    variant: data.variantId ? product.variants.find(v => v.id === data.variantId) : undefined,
   };
 
   const movements = getMovements();

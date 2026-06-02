@@ -50,6 +50,16 @@ export function CashierPage() {
     if (!quantity || quantity <= 0) return toast.error('Quantidade inválida');
     setLoading(true);
     try {
+      // validate stock availability
+      const prod = products.find(p => p.id === productId);
+      if (!prod) { toast.error('Produto não encontrado'); setLoading(false); return; }
+      if (variantId) {
+        const variant = prod.variants.find(v => v.id === variantId);
+        if (!variant) { toast.error('Variante não encontrada'); setLoading(false); return; }
+        if (quantity > variant.quantity) { toast.error('Quantidade maior que o estoque da variante'); setLoading(false); return; }
+      } else {
+        if (quantity > prod.totalQuantity) { toast.error('Quantidade maior que o estoque do produto'); setLoading(false); return; }
+      }
       const movement = await addMovement({
         productId,
         variantId,
@@ -78,9 +88,9 @@ export function CashierPage() {
     { key: 'date', header: 'Data', render: (m: any) => format(new Date(m.createdAt), "dd/MM/yyyy HH:mm") },
     { key: 'product', header: 'Produto', render: (m: any) => m.product?.name || '—' },
     { key: 'qty', header: 'Qtd', render: (m: any) => m.quantity },
-    { key: 'sale', header: 'Valor venda', render: (m: any) => `R$ ${((m.variant?.salePrice ?? m.product?.salePrice) || 0).toFixed(2).replace('.', ',')}` },
-    { key: 'cost', header: 'Valor custo', render: (m: any) => `R$ ${((m.variant?.costPrice ?? m.product?.costPrice) || 0).toFixed(2).replace('.', ',')}` },
-    { key: 'total', header: 'Total', render: (m: any) => `R$ ${(((m.variant?.salePrice ?? m.product?.salePrice) || 0) * m.quantity).toFixed(2).replace('.', ',')}` },
+    { key: 'sale', header: 'Valor unit.', render: (m: any) => `R$ ${(Number(m.unitPrice || (m.variant?.salePrice ?? m.product?.salePrice) )).toFixed(2).replace('.', ',')}` },
+    { key: 'cost', header: 'Valor custo', render: (m: any) => `R$ ${(Number(m.costPrice || (m.variant?.costPrice ?? m.product?.costPrice) )).toFixed(2).replace('.', ',')}` },
+    { key: 'total', header: 'Total', render: (m: any) => `R$ ${((Number(m.totalValue) || (Number(m.unitPrice || 0) * m.quantity))).toFixed(2).replace('.', ',')}` },
     { key: 'actions', header: '', render: (m: any) => (
       <div className="flex items-center gap-2">
         <Button variant="danger" size="sm" icon={<Trash2 size={14} />} onClick={() => { removeMovement(m.id); toast.success('Movimentação removida'); }}>

@@ -25,7 +25,7 @@ const navItems: NavItem[] = [
   { id: 'movements', label: 'Movimentações', icon: <ArrowLeftRight size={18} /> },
   { id: 'alerts', label: 'Alertas', icon: <AlertTriangle size={18} /> },
   { id: 'reports', label: 'Relatórios', icon: <BarChart3 size={18} /> },
-  { id: 'caixa', label: 'Caixa', icon: <DollarSign size={18} /> },
+  { id: 'cashier', label: 'Caixa', icon: <DollarSign size={18} /> },
 ];
 
 export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
