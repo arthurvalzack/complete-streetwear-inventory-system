@@ -3,7 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Toaster } from 'react-hot-toast';
 import { Routes, Route, Navigate, useLocation, useNavigate, Outlet } from 'react-router-dom';
 import { initializeAuth } from './lib/auth';
-import { seedDatabase } from './lib/database';
+import { seedDatabase, loadRemoteToLocal, getProducts } from './lib/database';
+import { isSupabaseConfigured } from './lib/supabase';
 import { useStore } from './store/useStore';
 
 import { LoginPage } from './pages/LoginPage';
@@ -123,9 +124,22 @@ function App() {
 
   useEffect(() => {
     initializeAuth();
-    seedDatabase();
-    initSession();
-    setAppReady(true);
+
+    (async () => {
+      // If Supabase is configured, prefer loading remote state first.
+      if (isSupabaseConfigured) {
+        await loadRemoteToLocal();
+        // If after loading remote there is still no local data, seed demo data.
+        const hasLocal = getProducts().length > 0 || !!localStorage.getItem('stck_db_initialized');
+        if (!hasLocal) seedDatabase();
+      } else {
+        // Offline/local dev: keep previous behavior
+        seedDatabase();
+      }
+
+      initSession();
+      setAppReady(true);
+    })();
   }, []);
 
   if (!appReady) {

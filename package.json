@@ -9,8 +9,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.31.0",
     "clsx": "2.1.1",
     "date-fns": "^4.1.0",
+    "dotenv": "^17.4.2",
     "framer-motion": "^12.38.0",
     "immer": "^11.1.8",
     "jspdf": "^4.2.1",
@@ -23,8 +25,7 @@
     "recharts": "^3.8.1",
     "tailwind-merge": "3.4.0",
     "xlsx": "^0.18.5",
-    "zustand": "^5.0.13",
-    "@supabase/supabase-js": "^2.31.0"
+    "zustand": "^5.0.13"
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.1.17",

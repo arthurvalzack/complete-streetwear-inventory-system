@@ -10,6 +10,8 @@ const ALERTS_KEY = 'stck_alerts';
 const STORE_CONFIG_KEY = 'stck_store_config';
 const INITIALIZED_KEY = 'stck_db_initialized';
 
+// When true, avoid syncing local changes up to remote (used during initial seeding)
+let suppressRemoteSync = false;
 // Utility functions
 function generateId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -57,27 +59,27 @@ export function getAlerts(): Alert[] {
 function saveProducts(products: Product[]): void {
   localStorage.setItem(PRODUCTS_KEY, JSON.stringify(products));
   // try sync to remote
-  if (isSupabaseConfigured) syncAllToRemote().catch(() => {});
+  if (isSupabaseConfigured && !suppressRemoteSync) syncAllToRemote().catch(() => {});
 }
 
 function saveMovements(movements: StockMovement[]): void {
   localStorage.setItem(MOVEMENTS_KEY, JSON.stringify(movements));
-  if (isSupabaseConfigured) syncAllToRemote().catch(() => {});
+  if (isSupabaseConfigured && !suppressRemoteSync) syncAllToRemote().catch(() => {});
 }
 
 function saveBrands(brands: Brand[]): void {
   localStorage.setItem(BRANDS_KEY, JSON.stringify(brands));
-  if (isSupabaseConfigured) syncAllToRemote().catch(() => {});
+  if (isSupabaseConfigured && !suppressRemoteSync) syncAllToRemote().catch(() => {});
 }
 
 function saveCategories(categories: Category[]): void {
   localStorage.setItem(CATEGORIES_KEY, JSON.stringify(categories));
-  if (isSupabaseConfigured) syncAllToRemote().catch(() => {});
+  if (isSupabaseConfigured && !suppressRemoteSync) syncAllToRemote().catch(() => {});
 }
 
 function saveAlerts(alerts: Alert[]): void {
   localStorage.setItem(ALERTS_KEY, JSON.stringify(alerts));
-  if (isSupabaseConfigured) syncAllToRemote().catch(() => {});
+  if (isSupabaseConfigured && !suppressRemoteSync) syncAllToRemote().catch(() => {});
 }
 
 // Product operations
@@ -312,6 +314,12 @@ export async function loadRemoteToLocal(): Promise<void> {
     if (error || !data) return;
     const remote = data.data as Record<string, unknown> | undefined;
     if (!remote) return;
+    // If local already has data (or was initialized), do not overwrite it with remote demo data.
+    // This prevents losing local edits when a remote seed exists.
+    const localProducts = getProducts();
+    if (localProducts && localProducts.length > 0) return;
+    if (localStorage.getItem(INITIALIZED_KEY)) return;
+
     if (remote.products) saveProducts(remote.products as Product[]);
     if (remote.movements) saveMovements(remote.movements as StockMovement[]);
     if (remote.brands) saveBrands(remote.brands as Brand[]);
@@ -362,6 +370,9 @@ export function createCategory(data: Omit<Category, 'id'>): Category {
 // Seed data
 export function seedDatabase(): void {
   if (localStorage.getItem(INITIALIZED_KEY)) return;
+
+  // Avoid pushing demo data to remote during initial seeding
+  suppressRemoteSync = true;
 
   // Brands
   const brands: Brand[] = [
@@ -729,5 +740,7 @@ export function seedDatabase(): void {
   });
   saveAlerts(initialAlerts);
 
+  // Re-enable remote sync after seeding
+  suppressRemoteSync = false;
   localStorage.setItem(INITIALIZED_KEY, 'true');
 }

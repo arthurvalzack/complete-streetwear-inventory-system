@@ -1,0 +1,107 @@
+{
+  "products": [
+    {
+      "id": "prod_001",
+      "name": "Supreme Box Logo Tee",
+      "brandId": "brand_001",
+      "brand": {
+        "id": "brand_001",
+        "name": "Supreme",
+        "slug": "supreme"
+      },
+      "categoryId": "cat_001",
+      "category": {
+        "id": "cat_001",
+        "name": "Camisetas",
+        "slug": "camisetas",
+        "subcategories": [
+          {
+            "id": "sub_001",
+            "name": "Manga Curta",
+            "slug": "manga-curta",
+            "categoryId": "cat_001"
+          },
+          {
+            "id": "sub_002",
+            "name": "Manga Longa",
+            "slug": "manga-longa",
+            "categoryId": "cat_001"
+          },
+          {
+            "id": "sub_009",
+            "name": "Regata",
+            "slug": "regata",
+            "categoryId": "cat_001"
+          }
+        ]
+      },
+      "subcategoryId": "sub_001",
+      "subcategory": {
+        "id": "sub_001",
+        "name": "Manga Curta",
+        "slug": "manga-curta",
+        "categoryId": "cat_001"
+      },
+      "description": "Camiseta clássica Supreme com Box Logo bordado. 100% algodão premium.",
+      "tags": [
+        "logo",
+        "classic",
+        "hype",
+        "collab"
+      ],
+      "images": [
+        "https://images.unsplash.com/photo-1512436991641-6745cdb1723f?auto=format&fit=crop&w=1200&q=80"
+      ],
+      "status": "active",
+      "costPrice": 180,
+      "salePrice": 450,
+      "variants": [
+        {
+          "id": "var_001_1",
+          "productId": "prod_001",
+          "sku": "SUP-GEN-0001-P-PRETO-1",
+          "size": "P",
+          "color": "Preto",
+          "colorHex": "#000000",
+          "quantity": 15,
+          "costPrice": 180,
+          "salePrice": 450
+        }
+      ],
+      "createdAt": "2026-06-01T00:00:00.000Z",
+      "updatedAt": "2026-06-01T00:00:00.000Z",
+      "sku": "SUP-GEN-0001",
+      "totalQuantity": 15
+    }
+  ],
+  "movements": [],
+  "brands": [
+    {
+      "id": "brand_001",
+      "name": "Supreme",
+      "slug": "supreme"
+    }
+  ],
+  "categories": [
+    {
+      "id": "cat_001",
+      "name": "Camisetas",
+      "slug": "camisetas",
+      "subcategories": [
+        {
+          "id": "sub_001",
+          "name": "Manga Curta",
+          "slug": "manga-curta",
+          "categoryId": "cat_001"
+        }
+      ]
+    }
+  ],
+  "alerts": [],
+  "storeConfig": {
+    "storeName": "FRAZON STORE",
+    "logoUrl": null,
+    "createdAt": "2026-06-01T00:00:00.000Z",
+    "updatedAt": "2026-06-01T00:00:00.000Z"
+  }
+}
