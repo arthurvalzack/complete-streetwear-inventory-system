@@ -392,6 +392,9 @@ export function createCategory(data: Omit<Category, 'id'>): Category {
 
 // Seed data
 export function seedDatabase(): void {
+  // Never run seed in production builds
+  if (typeof import !== 'undefined' && (import.meta as any)?.env && (import.meta as any).env.PROD) return;
+
   if (localStorage.getItem(INITIALIZED_KEY)) return;
 
   // Avoid pushing demo data to remote during initial seeding

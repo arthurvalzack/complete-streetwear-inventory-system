@@ -134,12 +134,12 @@ function App() {
       // If Supabase is configured, prefer loading remote state first.
       if (isSupabaseConfigured) {
         await loadRemoteToLocal();
-        // If after loading remote there is still no local data, seed demo data.
+        // If after loading remote there is still no local data, seed demo data only in dev.
         const hasLocal = getProducts().length > 0 || !!localStorage.getItem('stck_db_initialized');
-        if (!hasLocal) seedDatabase();
+        if (!hasLocal && import.meta.env.DEV) seedDatabase();
       } else {
-        // Offline/local dev: keep previous behavior
-        seedDatabase();
+        // Offline/local dev: run seed only in development environment
+        if (import.meta.env.DEV) seedDatabase();
       }
 
       initSession();
