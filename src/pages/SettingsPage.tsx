@@ -6,12 +6,23 @@ import { useStore } from '../store/useStore';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Modal } from '../components/ui/Modal';
+import { exportState, importState, syncAllToRemote, loadRemoteToLocal } from '../lib/database';
+import { isSupabaseConfigured } from '../lib/supabase';
 
 export function SettingsPage() {
   const { storeConfig, updateStoreConfig } = useStore();
   const [isEditing, setIsEditing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [logoPreview, setLogoPreview] = useState<string | null>(storeConfig.logoUrl || null);
+  const [lastSync, setLastSync] = useState<string | null>(localStorage.getItem('stck_last_sync') || null);
+  const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [includeProducts, setIncludeProducts] = useState(true);
+  const [includeMovements, setIncludeMovements] = useState(true);
+  const [includeBrands, setIncludeBrands] = useState(true);
+  const [includeCategories, setIncludeCategories] = useState(true);
+  const [includeConfig, setIncludeConfig] = useState(true);
 
   const [form, setForm] = useState({
     storeName: storeConfig.storeName,
@@ -67,6 +78,134 @@ export function SettingsPage() {
         <div>
           <h1 className="text-2xl font-bold text-white">Configurações</h1>
           <p className="text-sm text-white/40">Gerencie as informações da sua loja</p>
+        </div>
+      </motion.div>
+
+      {/* Backup & Sync */}
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.1 }}
+        className="glass rounded-2xl p-6 space-y-4"
+      >
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-xs text-white/30 font-medium mb-1">Backup e Sincronização</p>
+            <p className="text-sm text-white/60">Gerencie backups locais e sincronização com Supabase</p>
+            <p className="text-xs text-white/40 mt-2">Status Supabase: {isSupabaseConfigured ? 'Conectado' : 'Desconectado'}</p>
+            <p className="text-xs text-white/40">Última sincronização: {lastSync ? new Date(lastSync).toLocaleString() : '—'}</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="col-span-2 space-y-2">
+            <p className="text-sm font-medium text-white/70">Exportar Backup JSON</p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <label className="text-xs"><input type="checkbox" checked={includeProducts} onChange={e => setIncludeProducts(e.target.checked)} /> Produtos</label>
+              <label className="text-xs"><input type="checkbox" checked={includeMovements} onChange={e => setIncludeMovements(e.target.checked)} /> Movimentações</label>
+              <label className="text-xs"><input type="checkbox" checked={includeBrands} onChange={e => setIncludeBrands(e.target.checked)} /> Marcas</label>
+              <label className="text-xs"><input type="checkbox" checked={includeCategories} onChange={e => setIncludeCategories(e.target.checked)} /> Categorias</label>
+              <label className="text-xs"><input type="checkbox" checked={includeConfig} onChange={e => setIncludeConfig(e.target.checked)} /> Configurações</label>
+            </div>
+            <div className="mt-2">
+              <Button variant="primary" onClick={async () => {
+                setExporting(true);
+                try {
+                  const state = await exportState();
+                  const payload: any = {};
+                  if (includeProducts) payload.products = state.products || [];
+                  if (includeMovements) payload.movements = state.movements || [];
+                  if (includeBrands) payload.brands = state.brands || [];
+                  if (includeCategories) payload.categories = state.categories || [];
+                  if (includeConfig) payload.storeConfig = state.storeConfig || {};
+                  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `backup_${new Date().toISOString()}.json`;
+                  document.body.appendChild(a);
+                  a.click();
+                  a.remove();
+                  URL.revokeObjectURL(url);
+                  toast.success('Backup gerado e baixado');
+                } catch (err) {
+                  toast.error('Erro ao gerar backup');
+                } finally {
+                  setExporting(false);
+                }
+              }} loading={exporting}>Exportar Backup JSON</Button>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-white/70">Importar Backup JSON</p>
+            <input disabled={importing} type="file" accept="application/json" onChange={async (e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              const text = await file.text();
+              let parsed: any;
+              try {
+                parsed = JSON.parse(text);
+              } catch (err) {
+                toast.error('Arquivo JSON inválido');
+                return;
+              }
+              // basic validation
+              const ok = (parsed.products === undefined || Array.isArray(parsed.products))
+                && (parsed.movements === undefined || Array.isArray(parsed.movements));
+              if (!ok) {
+                toast.error('Estrutura inválida do backup');
+                return;
+              }
+              if (!confirm('Deseja realmente importar este backup? Isso substituirá o cache local.')) return;
+              setImporting(true);
+              try {
+                await importState(parsed, { overwriteRemote: false });
+                // refresh in-memory
+                useStore.getState().loadData();
+                toast.success('Backup importado e cache atualizado');
+              } catch (err) {
+                toast.error('Erro ao importar backup');
+              } finally {
+                setImporting(false);
+              }
+            }} />
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <Button variant="secondary" onClick={async () => {
+            setSyncing(true);
+            try {
+              await syncAllToRemote();
+              const ts = localStorage.getItem('stck_last_sync') || new Date().toISOString();
+              setLastSync(ts);
+              toast.success('Sincronização enviada ao Supabase');
+              useStore.getState().loadData();
+            } catch (err) {
+              toast.error('Erro ao sincronizar');
+            } finally { setSyncing(false); }
+          }} loading={syncing}>Sincronizar Agora (local → Supabase)</Button>
+
+          <Button variant="outline" onClick={async () => {
+            try {
+              await loadRemoteToLocal();
+              useStore.getState().loadData();
+              toast.success('Restaurado do Supabase para cache local');
+            } catch (err) {
+              toast.error('Erro ao restaurar do Supabase');
+            }
+          }}>Restaurar do Supabase (substituir cache local)</Button>
+
+          <Button variant="ghost" onClick={async () => {
+            const state = await exportState();
+            const stats = {
+              products: (state.products || []).length,
+              movements: (state.movements || []).length,
+              sizeKB: Math.round(JSON.stringify(state).length / 1024),
+            };
+            alert(`Produtos: ${stats.products}\nMovimentações: ${stats.movements}\nTamanho aprox.: ${stats.sizeKB} KB`);
+          }}>Estatísticas</Button>
         </div>
       </motion.div>
 
