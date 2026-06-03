@@ -34,10 +34,11 @@ export function CashierPage() {
     let items = 0;
     todaysSales.forEach((m: any) => {
       const qty = Number(m.quantity) || 0;
-      const salePrice = Number(m.variant?.salePrice ?? m.product?.salePrice ?? 0) || 0;
-      const costPrice = Number(m.variant?.costPrice ?? m.product?.costPrice ?? 0) || 0;
-      total += qty * salePrice;
-      profit += qty * (salePrice - costPrice);
+      const salePrice = Number(m.unitPrice ?? m.variant?.salePrice ?? m.product?.salePrice ?? 0) || 0;
+      const costPrice = Number(m.costPrice ?? m.variant?.costPrice ?? m.product?.costPrice ?? 0) || 0;
+      const movementTotal = Number(m.totalValue ?? (salePrice * qty)) || 0;
+      total += movementTotal;
+      profit += (movementTotal - (costPrice * qty));
       items += qty;
     });
     return { total, profit, items, transactions: todaysSales.length };
