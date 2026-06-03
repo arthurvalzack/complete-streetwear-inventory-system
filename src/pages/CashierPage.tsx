@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
-import { format } from 'date-fns';
+import { format, parseISO } from 'date-fns';
 import { DollarSign, ShoppingBag, Trash2 } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { Card } from '../components/ui/Card';
@@ -25,7 +25,14 @@ export function CashierPage() {
   };
 
   const todaysSales = useMemo(() => {
-    return movements.filter(m => m.createdAt && m.createdAt.startsWith(today) && isSale(m));
+    return movements.filter(m => {
+      if (!m.createdAt) return false;
+      try {
+        return format(parseISO(m.createdAt), 'yyyy-MM-dd') === today && isSale(m);
+      } catch (e) {
+        return m.createdAt.startsWith(today) && isSale(m);
+      }
+    });
   }, [movements]);
 
   const totals = useMemo(() => {
