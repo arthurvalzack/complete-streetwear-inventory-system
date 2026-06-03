@@ -3,24 +3,25 @@ import { useLocation } from 'react-router-dom';
 import { MapPin } from 'lucide-react';
 import { getProducts, getStoreConfig } from '../lib/database';
 import { getCatalogoItems, getCatalogoConfig, parseCatalogoShareParam } from '../services/catalogoService';
+import { Product, StoreConfig } from '../types';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 
 export function PublicCatalogPage() {
-  const [products, setProducts] = useState([]);
-  const [config, setConfig] = useState({
+  const [products, setProducts] = useState<Product[]>([]);
+  const [config, setConfig] = useState<Record<string, any>>({
     title: '',
     description: '',
     whatsapp: '',
     mensagem: 'Oi! Vi o catálogo da Frazon Store e tenho interesse em: {produto}. Pode me passar o valor e disponibilidade? 😊',
   });
   const location = useLocation();
-  const [storeConfig, setStoreConfig] = useState({ storeName: 'FRAZON STORE', logoUrl: undefined });
+  const [storeConfig, setStoreConfig] = useState<StoreConfig>(getStoreConfig());
 
   const loadCatalog = () => {
     const sharedCatalog = parseCatalogoShareParam(location.search);
     const catalogIds = sharedCatalog?.ids ?? getCatalogoItems();
-    const allProducts = sharedCatalog?.products ?? getProducts();
+    const allProducts = (sharedCatalog?.products ?? getProducts()) as Product[];
     const productsToShow = allProducts.filter(product => {
       const isPublished = Array.isArray(catalogIds) && catalogIds.length > 0 ? catalogIds.includes(product.id) : true;
       return isPublished && product.status === 'active';

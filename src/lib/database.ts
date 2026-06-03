@@ -324,7 +324,7 @@ async function syncAllToRemote(): Promise<void> {
       alerts: getAlerts(),
       storeConfig: getStoreConfig(),
     };
-    await supabase.from('app_state').upsert([{ id: 'global', data: payload }], { returning: 'minimal' });
+    await supabase.from('app_state').upsert([{ id: 'global', data: payload }]);
   } catch (e) {
     // fail silently — keep working offline
   }
@@ -390,16 +390,15 @@ export function createCategory(data: Omit<Category, 'id'>): Category {
   return category;
 }
 
-// Seed data
 export function seedDatabase(): void {
   // Never run seed in production builds
-  if (typeof import !== 'undefined' && (import.meta as any)?.env && (import.meta as any).env.PROD) return;
+  if (import.meta.env.PROD) return;
 
   if (localStorage.getItem(INITIALIZED_KEY)) return;
 
   // Avoid pushing demo data to remote during initial seeding
   suppressRemoteSync = true;
-
+  
   // Brands
   const brands: Brand[] = [
     { id: 'brand_001', name: 'Supreme', slug: 'supreme' },
