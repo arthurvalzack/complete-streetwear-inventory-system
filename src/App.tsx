@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Toaster } from 'react-hot-toast';
 import { Routes, Route, Navigate, useLocation, useNavigate, Outlet } from 'react-router-dom';
 import { initializeAuth } from './lib/auth';
-import { seedDatabase, loadRemoteToLocal, getProducts } from './lib/database';
+import { seedDatabase, loadRemoteToLocal, getProducts, ensureBaseTaxonomy } from './lib/database';
 import { isSupabaseConfigured } from './lib/supabase';
 import { useStore } from './store/useStore';
 
@@ -134,10 +134,13 @@ function App() {
       // If Supabase is configured, prefer loading remote state first.
       if (isSupabaseConfigured) {
         await loadRemoteToLocal();
+        // Ensure base taxonomy exists even if seed is disabled in production
+        await ensureBaseTaxonomy();
         // If after loading remote there is still no local data, seed demo data only in dev.
         const hasLocal = getProducts().length > 0 || !!localStorage.getItem('stck_db_initialized');
         if (!hasLocal && import.meta.env.DEV) seedDatabase();
       } else {
+        await ensureBaseTaxonomy();
         // Offline/local dev: run seed only in development environment
         if (import.meta.env.DEV) seedDatabase();
       }

@@ -102,6 +102,8 @@ export function ProductsPage() {
     return cat?.subcategories || [];
   }, [categories, form.categoryId]);
 
+  const noCategories = categories.length === 0;
+
   const handleImageUpload = (file: File) => {
     const reader = new FileReader();
     reader.onloadend = () => {
@@ -551,17 +553,23 @@ export function ProductsPage() {
               value={form.categoryId}
               onChange={e => setForm(prev => ({ ...prev, categoryId: e.target.value, subcategoryId: '' }))}
               options={categories.map(c => ({ value: c.id, label: c.name }))}
-              placeholder="Selecione"
+              placeholder={noCategories ? 'Nenhuma categoria cadastrada' : 'Selecione'}
               error={formErrors.categoryId}
             />
-            <Select
-              label="Subcategoria"
-              value={form.subcategoryId}
-              onChange={e => setForm(prev => ({ ...prev, subcategoryId: e.target.value }))}
-              options={subcategories.map(s => ({ value: s.id, label: s.name }))}
-              placeholder="Selecione"
-              disabled={!form.categoryId}
-            />
+            {noCategories ? (
+              <div className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.04] flex items-center text-sm text-white/50">
+                Nenhuma categoria cadastrada. Cadastre uma categoria em Configurações.
+              </div>
+            ) : (
+              <Select
+                label="Subcategoria"
+                value={form.subcategoryId}
+                onChange={e => setForm(prev => ({ ...prev, subcategoryId: e.target.value }))}
+                options={subcategories.map(s => ({ value: s.id, label: s.name }))}
+                placeholder="Selecione"
+                disabled={!form.categoryId}
+              />
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-4">

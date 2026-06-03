@@ -6,7 +6,7 @@ import { useStore } from '../store/useStore';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Modal } from '../components/ui/Modal';
-import { exportState, importState, syncAllToRemote, loadRemoteToLocal } from '../lib/database';
+import { exportState, importState, syncAllToRemote, loadRemoteToLocal, getCategories, createCategory, addSubcategory, deleteCategory } from '../lib/database';
 import { isSupabaseConfigured } from '../lib/supabase';
 
 export function SettingsPage() {
@@ -78,6 +78,111 @@ export function SettingsPage() {
         <div>
           <h1 className="text-2xl font-bold text-white">Configurações</h1>
           <p className="text-sm text-white/40">Gerencie as informações da sua loja</p>
+        </div>
+      </motion.div>
+
+      {/* Categories Management */}
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.1 }}
+        className="glass rounded-2xl p-6 space-y-4"
+      >
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-xs text-white/30 font-medium mb-1">Categorias</p>
+            <p className="text-sm text-white/60">Gerencie categorias e subcategorias</p>
+          </div>
+          <div>
+            <Button onClick={() => { useStore.getState().loadData(); toast.success('Atualizado'); }}>Atualizar</Button>
+            <Button className="ml-2" onClick={() => { syncAllToRemote().then(() => toast.success('Sincronizado')); }}>Sincronizar</Button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="col-span-2">
+            <p className="text-sm text-white/70 mb-2">Lista de Categorias</p>
+            <div className="space-y-2">
+              {getCategories().length === 0 && (
+                <div className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.04] text-sm text-white/50">Nenhuma categoria cadastrada.</div>
+              )}
+              {getCategories().map(cat => (
+                <div key={cat.id} className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.04]">
+                  <div className="flex items-center justify-between mb-2">
+                    <div>
+                      <p className="text-sm text-white font-medium">{cat.name}</p>
+                      <p className="text-xs text-white/40">{cat.subcategories?.length || 0} subcategoria(s)</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button className="text-xs text-red-400" onClick={async () => {
+                        if (!confirm('Confirma exclusão desta categoria?')) return;
+                        const ok = await deleteCategory(cat.id);
+                        if (ok) {
+                          useStore.getState().loadData();
+                          await syncAllToRemote();
+                          toast.success('Categoria excluída');
+                        } else {
+                          toast.error('Não é possível excluir esta categoria porque existem produtos vinculados.');
+                        }
+                      }}>Excluir</button>
+                    </div>
+                  </div>
+                  <div className="text-xs text-white/40 mb-2">Subcategorias:</div>
+                  <div className="flex flex-col gap-2 mb-3">
+                    {(cat.subcategories || []).map(s => (
+                      <div key={s.id} className="flex items-center justify-between bg-white/[0.01] p-2 rounded">
+                        <div className="text-sm text-white/60">{s.name}</div>
+                        <div className="flex items-center gap-2">
+                          <button className="text-xs text-red-400" onClick={async () => {
+                            if (!confirm('Confirma exclusão desta subcategoria?')) return;
+                            // delete subcategory with safety
+                            const { deleteSubcategory } = await import('../lib/database');
+                            const ok = await deleteSubcategory(cat.id, s.id);
+                            if (ok) {
+                              useStore.getState().loadData();
+                              await syncAllToRemote();
+                              toast.success('Subcategoria excluída');
+                            } else {
+                              toast.error('Não é possível excluir esta subcategoria porque existem produtos vinculados.');
+                            }
+                          }}>Excluir</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex gap-2">
+                    <input placeholder="Nova subcategoria" id={`sub-${cat.id}`} className="input-dark w-full rounded-xl px-3 py-2 text-sm" />
+                    <Button onClick={async () => {
+                      const el = document.getElementById(`sub-${cat.id}`) as HTMLInputElement | null;
+                      const val = el?.value?.trim();
+                      if (!val) { toast.error('Nome da subcategoria é obrigatório'); return; }
+                      await addSubcategory(cat.id, val);
+                      el!.value = '';
+                      useStore.getState().loadData();
+                      await syncAllToRemote();
+                      toast.success('Subcategoria adicionada');
+                    }}>Adicionar</Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <p className="text-sm text-white/70 mb-2">Adicionar Categoria</p>
+            <div className="space-y-2">
+              <Input id="new-cat-name" placeholder="Nome da categoria" />
+              <Button onClick={async () => {
+                const el = document.getElementById('new-cat-name') as HTMLInputElement | null;
+                const name = el?.value?.trim();
+                if (!name) { toast.error('Nome é obrigatório'); return; }
+                createCategory({ name, slug: name.toLowerCase().replace(/\s+/g, '-'), subcategories: [] });
+                el!.value = '';
+                useStore.getState().loadData();
+                toast.success('Categoria criada');
+              }}>Criar Categoria</Button>
+            </div>
+          </div>
         </div>
       </motion.div>
 

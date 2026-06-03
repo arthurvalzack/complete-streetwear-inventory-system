@@ -480,6 +480,124 @@ export function createCategory(data: Omit<Category, 'id'>): Category {
   return category;
 }
 
+export async function addSubcategory(categoryId: string, name: string): Promise<Category | null> {
+  const categories = getCategories();
+  const idx = categories.findIndex(c => c.id === categoryId);
+  if (idx === -1) return null;
+  const cat = categories[idx];
+  const slug = slugify(name);
+  const sub = { id: generateId('sub'), name: name.trim(), slug, categoryId };
+  cat.subcategories = cat.subcategories || [];
+  // avoid duplicates
+  if (cat.subcategories.find(s => s.slug === slug || s.name.toLowerCase() === name.toLowerCase())) return cat;
+  cat.subcategories.push(sub);
+  categories[idx] = cat;
+  saveCategories(categories);
+  if (isSupabaseConfigured && supabase) {
+    try { await supabase.from('categories').upsert([cat]); } catch (_) { }
+  }
+  return cat;
+}
+
+export async function deleteCategory(id: string): Promise<boolean> {
+  const categories = getCategories();
+  const category = categories.find(c => c.id === id);
+  if (!category) return false;
+  // prevent deletion if any product linked to this category
+  const products = getProducts();
+  const linked = products.some(p => p.categoryId === id);
+  if (linked) return false;
+  const filtered = categories.filter(c => c.id !== id);
+  saveCategories(filtered);
+  if (isSupabaseConfigured && supabase) {
+    try { await supabase.from('categories').upsert(filtered); } catch (_) { }
+  }
+  return true;
+}
+
+export async function deleteSubcategory(categoryId: string, subId: string): Promise<boolean> {
+  const categories = getCategories();
+  const idx = categories.findIndex(c => c.id === categoryId);
+  if (idx === -1) return false;
+  // prevent deletion if any product linked to this subcategory
+  const products = getProducts();
+  const linked = products.some(p => p.subcategoryId === subId);
+  if (linked) return false;
+  const cat = categories[idx];
+  cat.subcategories = (cat.subcategories || []).filter(s => s.id !== subId);
+  categories[idx] = cat;
+  saveCategories(categories);
+  if (isSupabaseConfigured && supabase) {
+    try { await supabase.from('categories').upsert([cat]); } catch (_) { }
+  }
+  return true;
+}
+
+function slugify(name: string) {
+  return name.toLowerCase().replace(/\s+/g, '-').replace(/[^\w-]/g, '');
+}
+
+export async function ensureBaseTaxonomy(): Promise<void> {
+  // Ensure base categories/subcategories and optional brands exist for app to function
+  try {
+    const existingCategories = getCategories();
+    const existingBrands = getBrands();
+
+    const base = [
+      { name: 'Blusas', subs: ['Moletom', 'Manga longa', 'Básica'] },
+      { name: 'Camisetas', subs: ['Oversized', 'Streetwear', 'Básica', 'Estampada'] },
+      { name: 'Jaquetas', subs: ['Corta vento', 'Jeans', 'Puffer'] },
+      { name: 'Bermudas', subs: ['Jeans', 'Sarja', 'Tactel'] },
+      { name: 'Calças', subs: ['Jeans', 'Cargo', 'Moletom'] },
+      { name: 'Dry Fit', subs: ['Camisa dry fit', 'Regata dry fit'] },
+      { name: 'Acessórios', subs: ['Boné', 'Meia', 'Bolsa'] },
+      { name: 'Outros', subs: [] },
+    ];
+
+    const toCreateCats: Category[] = [];
+    base.forEach((b, idx) => {
+      const slug = slugify(b.name);
+      const exists = existingCategories.find(c => c.slug === slug || c.name.toLowerCase() === b.name.toLowerCase());
+      if (exists) return;
+      const catId = `cat_base_${idx + 1}`;
+      const cat: Category = {
+        id: catId,
+        name: b.name,
+        slug,
+        subcategories: b.subs.map((s, si) => ({ id: `sub_base_${idx + 1}_${si + 1}`, name: s, slug: slugify(s), categoryId: catId }))
+      };
+      toCreateCats.push(cat);
+    });
+
+    // Optional default brands (lightweight)
+    const defaultBrands = ['Generic', 'Local'];
+    const toCreateBrands: Brand[] = [];
+    defaultBrands.forEach((bn, i) => {
+      const slug = slugify(bn);
+      const exists = existingBrands.find(b => b.slug === slug || b.name.toLowerCase() === bn.toLowerCase());
+      if (exists) return;
+      toCreateBrands.push({ id: `brand_base_${i + 1}`, name: bn, slug });
+    });
+
+    if (toCreateCats.length > 0) {
+      const merged = [...existingCategories, ...toCreateCats];
+      saveCategories(merged);
+    }
+    if (toCreateBrands.length > 0) {
+      const merged = [...existingBrands, ...toCreateBrands];
+      saveBrands(merged);
+    }
+
+    // If supabase available, upsert new items
+    if (isSupabaseConfigured && supabase) {
+      try { if (toCreateBrands.length > 0) await supabase.from('brands').upsert(toCreateBrands); } catch (_) {}
+      try { if (toCreateCats.length > 0) await supabase.from('categories').upsert(toCreateCats); } catch (_) {}
+    }
+  } catch (e) {
+    // ignore
+  }
+}
+
 export function seedDatabase(): void {
   // Never run seed in production builds
   if (import.meta.env.PROD) return;
