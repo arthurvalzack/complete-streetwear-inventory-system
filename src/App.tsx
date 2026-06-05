@@ -17,11 +17,12 @@ import { BrandsPage } from './pages/BrandsPage';
 import { PublicCatalogPage } from './pages/PublicCatalogPage';
 import { AdminCatalogPage } from './pages/AdminCatalogPage';
 import { CashierPage } from './pages/CashierPage';
+import { SettingsPage } from './pages/SettingsPage';
 
 import { Sidebar } from './components/layout/Sidebar';
 import { TopBar } from './components/layout/TopBar';
 
-type Page = 'dashboard' | 'products' | 'movements' | 'alerts' | 'reports' | 'brands' | 'notifications' | 'admin_catalog' | 'cashier';
+type Page = 'dashboard' | 'products' | 'movements' | 'alerts' | 'reports' | 'brands' | 'notifications' | 'admin_catalog' | 'cashier' | 'settings';
 
 const pageConfig: Record<Page, { title: string; subtitle?: string }> = {
   dashboard: { title: 'Dashboard', subtitle: 'Visão geral do estoque' },
@@ -29,6 +30,7 @@ const pageConfig: Record<Page, { title: string; subtitle?: string }> = {
   movements: { title: 'Movimentações', subtitle: 'Entradas, saídas e ajustes de estoque' },
   alerts: { title: 'Alertas', subtitle: 'Notificações de estoque crítico' },
   reports: { title: 'Relatórios', subtitle: 'Exporte dados em PDF, CSV ou Excel' },
+  settings: { title: 'Configurações', subtitle: 'Backup e sincronização' },
   brands: { title: 'Catálogo', subtitle: 'Marcas e categorias' },
   notifications: { title: 'Notificações', subtitle: 'Central de alertas' },
   admin_catalog: { title: 'Catálogo', subtitle: 'Gerencie o catálogo público' },
@@ -40,6 +42,7 @@ function getPageFromPath(pathname: string): Page {
   if (segments.length === 0) return 'dashboard';
   const page = segments[0];
   if (page === 'caixa') return 'cashier';
+  if (page === 'settings' || page === 'configuracoes') return 'settings';
   if (['dashboard', 'products', 'movements', 'alerts', 'reports', 'brands', 'notifications', 'cashier'].includes(page)) {
     return page as Page;
   }
@@ -66,6 +69,7 @@ function PrivateLayout() {
   const config = pageConfig[currentPage] || pageConfig.dashboard;
 
   const handleNavigate = (page: string) => {
+    if (page === 'settings') { navigate('/settings'); return; }
     if (page === 'admin_catalog') {
       navigate('/admin/catalogo');
       return;
@@ -175,6 +179,7 @@ function App() {
           <Route path="notifications" element={<AlertsPage />} />
           <Route path="reports" element={<ReportsPage />} />
           <Route path="brands" element={<BrandsPage />} />
+          <Route path="settings" element={<SettingsPage />} />
           <Route path="admin/catalogo" element={<AdminCatalogPage />} />
           <Route path="caixa" element={<CashierPage />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />

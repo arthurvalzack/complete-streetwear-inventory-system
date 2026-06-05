@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, Package, ArrowLeftRight, BarChart3,
   Bell, LogOut, ChevronLeft, ChevronRight,
-  Zap, ShoppingBag, AlertTriangle, DollarSign
+  Zap, ShoppingBag, AlertTriangle, DollarSign, Settings
 } from 'lucide-react';
 import { useStore } from '../../store/useStore';
 
@@ -25,6 +25,7 @@ const navItems: NavItem[] = [
   { id: 'movements', label: 'Movimentações', icon: <ArrowLeftRight size={18} /> },
   { id: 'alerts', label: 'Alertas', icon: <AlertTriangle size={18} /> },
   { id: 'reports', label: 'Relatórios', icon: <BarChart3 size={18} /> },
+  { id: 'settings', label: 'Configurações', icon: <Settings size={18} /> },
   { id: 'cashier', label: 'Caixa', icon: <DollarSign size={18} /> },
 ];
 

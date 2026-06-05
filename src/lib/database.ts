@@ -28,7 +28,34 @@ function generateSKU(brandSlug: string, categorySlug: string, index: number): st
 export function getProducts(): Product[] {
   const raw = localStorage.getItem(PRODUCTS_KEY);
   if (!raw) return [];
-  try { return JSON.parse(raw); } catch { return []; }
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map(normalizeProduct);
+  } catch { return []; }
+}
+
+
+// Normalize product fields to a consistent shape
+export function normalizeProduct(p: any): Product {
+  if (!p) return p;
+  const prod: any = { ...p };
+  // normalize price fields -> salePrice
+  if (prod.salePrice === undefined && prod.price !== undefined) prod.salePrice = Number(prod.price);
+  if (prod.salePrice === undefined && prod.sellingPrice !== undefined) prod.salePrice = Number(prod.sellingPrice);
+  prod.salePrice = prod.salePrice ? Number(prod.salePrice) : 0;
+  prod.costPrice = prod.costPrice ? Number(prod.costPrice) : 0;
+  prod.variants = Array.isArray(prod.variants) ? prod.variants.map((v: any) => ({
+    ...v,
+    quantity: Number(v.quantity) || 0,
+    costPrice: v.costPrice !== undefined ? Number(v.costPrice) : prod.costPrice,
+    salePrice: v.salePrice !== undefined ? Number(v.salePrice) : prod.salePrice,
+  })) : [];
+  prod.totalQuantity = prod.variants.reduce((acc: number, v: any) => acc + (Number(v.quantity) || 0), 0);
+  // ensure id and slug exist
+  prod.id = prod.id || generateId('prod');
+  prod.slug = prod.slug || (prod.name ? prod.name.toLowerCase().replace(/\s+/g, '-') : 'product');
+  return prod as Product;
 }
 
 export function getMovements(): StockMovement[] {
@@ -152,18 +179,369 @@ export function getProductById(id: string): Product | null {
   return getProducts().find(p => p.id === id) || null;
 }
 
+// Conversion helpers between frontend model and Supabase schema
+export function productToSupabase(p: Product): any {
+  return {
+    id: p.id,
+    name: p.name,
+    brand_id: p.brandId,
+    brand_name: p.brand?.name || p.brand?.name || null,
+    category_id: p.categoryId,
+    category_name: p.category?.name || null,
+    subcategory_id: p.subcategoryId,
+    subcategory_name: p.subcategory?.name || null,
+    sku: p.sku,
+    image: (p.images && p.images[0]) || null,
+    cost_price: p.costPrice ?? 0,
+    sale_price: p.salePrice ?? 0,
+    status: p.status,
+    variants: JSON.stringify(p.variants || []),
+    tags: JSON.stringify(p.tags || []),
+    total_quantity: p.totalQuantity ?? 0,
+    created_at: p.createdAt,
+    updated_at: p.updatedAt,
+  };
+}
+
+export function productFromSupabase(row: any): Product {
+  if (!row) return row;
+  const variants = (() => {
+    try {
+      if (row.variants && typeof row.variants === 'string') return JSON.parse(row.variants);
+      if (row.variants && Array.isArray(row.variants)) return row.variants;
+      return [];
+    } catch (e) { return []; }
+  })();
+  const prod: any = {
+    id: row.id,
+    name: row.name,
+    sku: row.sku || '',
+    brandId: row.brand_id || row.brandId || '',
+    brand: row.brand_name ? { id: row.brand_id || '', name: row.brand_name, slug: '' } : undefined,
+    categoryId: row.category_id || row.categoryId || '',
+    category: row.category_name ? { id: row.category_id || '', name: row.category_name, slug: '' } : undefined,
+    subcategoryId: row.subcategory_id || row.subcategoryId || '',
+    subcategory: row.subcategory_name ? { id: row.subcategory_id || '', name: row.subcategory_name, slug: '' } : undefined,
+    description: row.description || '',
+    tags: row.tags ? (typeof row.tags === 'string' ? JSON.parse(row.tags) : row.tags) : [],
+    images: row.image ? [row.image] : [],
+    status: row.status || 'active',
+    variants: (variants || []).map((v: any) => ({
+      id: v.id || generateId('var'),
+      productId: row.id,
+      size: v.size || v.s || '',
+      color: v.color || '',
+      colorHex: v.colorHex || v.color_hex || '',
+      sku: v.sku || '',
+      quantity: Number(v.quantity || 0),
+      costPrice: Number(v.costPrice ?? v.cost_price ?? row.cost_price ?? 0),
+      salePrice: Number(v.salePrice ?? v.sale_price ?? row.sale_price ?? 0),
+    })),
+    totalQuantity: Number(row.total_quantity ?? 0),
+    costPrice: Number(row.cost_price ?? 0),
+    salePrice: Number(row.sale_price ?? 0),
+    createdAt: row.created_at || new Date().toISOString(),
+    updatedAt: row.updated_at || new Date().toISOString(),
+  };
+  return normalizeProduct(prod as any);
+}
+
+export function movementToSupabase(m: any): any {
+  return {
+    id: m.id,
+    type: m.type || 'sale',
+    product_id: m.productId || m.product_id,
+    product_name: m.productName || m.product_name,
+    brand_name: m.brand || m.brand_name || null,
+    category_name: m.category || m.category_name || null,
+    subcategory_name: m.subcategory || m.subcategory_name || null,
+    variant_id: m.variantId || m.variant_id || null,
+    size: m.size || null,
+    color: m.color || null,
+    quantity: m.quantity,
+    unit_price: m.unitPrice ?? m.unit_price ?? 0,
+    cost_price: m.costPrice ?? m.cost_price ?? 0,
+    total_value: m.totalValue ?? m.total_value ?? 0,
+    profit: m.profit ?? 0,
+    product_snapshot: JSON.stringify(m.product_snapshot || m.product || null),
+    reason: m.reason || null,
+    notes: m.notes || null,
+    user_id: m.userId || m.user_id || null,
+    created_at: m.createdAt || new Date().toISOString(),
+    date: m.date || new Date().toISOString(),
+  };
+}
+
+export function movementFromSupabase(row: any): StockMovement {
+  const prodSnapshot = (() => {
+    try {
+      if (!row.product_snapshot) return undefined;
+      if (typeof row.product_snapshot === 'string') return JSON.parse(row.product_snapshot);
+      return row.product_snapshot;
+    } catch (e) { return undefined; }
+  })();
+  const mv: any = {
+    id: row.id,
+    type: row.type,
+    productId: row.product_id,
+    productName: row.product_name,
+    brand: row.brand_name,
+    category: row.category_name,
+    subcategory: row.subcategory_name,
+    variantId: row.variant_id,
+    size: row.size,
+    color: row.color,
+    quantity: Number(row.quantity || 0),
+    unitPrice: Number(row.unit_price || 0),
+    costPrice: Number(row.cost_price || 0),
+    totalValue: Number(row.total_value || 0),
+    profit: Number(row.profit || 0),
+    product_snapshot: prodSnapshot,
+    reason: row.reason,
+    notes: row.notes,
+    userId: row.user_id,
+    createdAt: row.created_at,
+  };
+  return mv as StockMovement;
+}
+
+// Fetch helpers
+export async function fetchProductsFromSupabase(): Promise<Product[]> {
+  if (!isSupabaseConfigured || !supabase) return [];
+  const { data, error } = await supabase.from('products').select('*');
+  if (error) throw error;
+  return (data || []).map(productFromSupabase);
+}
+
+export async function fetchMovementsFromSupabase(): Promise<StockMovement[]> {
+  if (!isSupabaseConfigured || !supabase) return [];
+  const { data, error } = await supabase.from('movements').select('*').order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data || []).map(movementFromSupabase);
+}
+
+export async function fetchCategoriesFromSupabase(): Promise<Category[]> {
+  if (!isSupabaseConfigured || !supabase) return [];
+  const { data, error } = await supabase.from('categories').select('*');
+  if (error) throw error;
+  return data || [];
+}
+
+export async function fetchBrandsFromSupabase(): Promise<Brand[]> {
+  if (!isSupabaseConfigured || !supabase) return [];
+  const { data, error } = await supabase.from('brands').select('*');
+  if (error) throw error;
+  return data || [];
+}
+
+export async function saveProductToSupabase(p: Product) {
+  if (!isSupabaseConfigured || !supabase) throw new Error('Supabase not configured');
+  const row = productToSupabase(p);
+  const { data, error } = await supabase.from('products').upsert([row]).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function updateProductInSupabase(productId: string, p: Partial<Product>) {
+  if (!isSupabaseConfigured || !supabase) throw new Error('Supabase not configured');
+  // fetch existing, merge and upsert
+  const existing = await fetchProductRemote(productId);
+  if (!existing) throw new Error('product not found remote');
+  const merged: any = { ...productToSupabase(existing), ...productToSupabase({ ...existing, ...p as any }) };
+  const { data, error } = await supabase.from('products').upsert([merged]).select().single();
+  if (error) throw error;
+  return data;
+}
+// --- Supabase-backed helpers and transactional sale flow ---
+async function fetchProductRemote(productId: string): Promise<Product | null> {
+  if (!isSupabaseConfigured || !supabase) return null;
+  try {
+    const { data, error } = await supabase.from('products').select('*').eq('id', productId).limit(1).single();
+    if (error || !data) return null;
+    // normalize variants if needed
+    try { return normalizeProduct(data as any); } catch { return data as Product; }
+  } catch (e) {
+    return null;
+  }
+}
+
+async function createMovementInSupabase(mov: any) {
+  if (!isSupabaseConfigured || !supabase) throw new Error('Supabase not configured');
+  const payload = { ...mov };
+  const { data, error } = await supabase.from('movements').insert([payload]).select().single();
+  if (error) throw error;
+  return data;
+}
+
+async function deleteMovementInSupabase(movementId: string) {
+  if (!isSupabaseConfigured || !supabase) throw new Error('Supabase not configured');
+  const { error } = await supabase.from('movements').delete().eq('id', movementId);
+  if (error) throw error;
+  return true;
+}
+
+async function updateProductStockInSupabase(productId: string, updatedProduct: Product) {
+  if (!isSupabaseConfigured || !supabase) throw new Error('Supabase not configured');
+  // Upsert the whole product row (server schema should accept jsonb variants)
+  const { data, error } = await supabase.from('products').upsert([updatedProduct]).select().single();
+  if (error) throw error;
+  return data;
+}
+
+// registerSale: primary sale entrypoint. Attempts a server-side RPC first, falls back to manual flow with rollback.
+export async function registerSale(params: {
+  productId: string;
+  variantId?: string;
+  quantity: number;
+  userId?: string;
+  reason?: string;
+  notes?: string;
+}): Promise<StockMovement | null> {
+  const { productId, variantId, quantity, userId, reason = 'Venda', notes = '' } = params;
+  // validations (local cache source-of-truth when supabase not available)
+  if (!productId) throw new Error('productId required');
+  if (!quantity || Number(quantity) <= 0) throw new Error('quantity must be > 0');
+
+  // get authoritative product (prefer remote)
+  let product: Product | null = null;
+  if (isSupabaseConfigured && supabase) {
+    product = await fetchProductRemote(productId);
+  }
+  if (!product) product = getProductById(productId);
+  if (!product) throw new Error('Produto não encontrado');
+
+  // find variant and available stock
+  const variant = variantId ? (product.variants || []).find(v => v.id === variantId) : undefined;
+  const availableStock = variant ? Number(variant.quantity || 0) : Number(product.totalQuantity || 0);
+  if (quantity > availableStock) throw new Error('Quantidade maior que o estoque disponível');
+
+  // determine pricing
+  const unitPrice = variant?.salePrice ?? product.salePrice ?? 0;
+  const costPrice = variant?.costPrice ?? product.costPrice ?? 0;
+  const totalValue = Number((unitPrice * quantity).toFixed(2));
+  const profit = Number((totalValue - (costPrice * quantity)).toFixed(2));
+
+  // build movement payload
+  const movementPayload: any = {
+    id: generateId('mov'),
+    type: 'sale',
+    productId: product.id,
+    productName: product.name,
+    brand: product.brand?.name || product.brandName || null,
+    category: product.category?.name || product.categoryName || null,
+    subcategory: product.subcategory?.name || product.subcategoryName || null,
+    variantId: variant?.id || null,
+    size: variant?.size || null,
+    color: variant?.color || null,
+    quantity: Number(quantity),
+    unitPrice: Number(unitPrice),
+    costPrice: Number(costPrice),
+    totalValue,
+    profit,
+    product_snapshot: { ...product },
+    createdAt: new Date().toISOString(),
+    date: new Date().toISOString(),
+    reason,
+    notes,
+    userId: userId || 'system',
+  };
+
+  if (isSupabaseConfigured && supabase) {
+    // Try RPC first (recommended). If RPC exists on server it should perform transactional update.
+    try {
+      const { data: rpcData, error: rpcErr } = await supabase.rpc('register_sale', {
+        p_product_id: movementPayload.productId,
+        p_variant_id: movementPayload.variantId,
+        p_quantity: movementPayload.quantity,
+        p_unit_price: movementPayload.unitPrice,
+        p_cost_price: movementPayload.costPrice,
+        p_movement_id: movementPayload.id,
+        p_user_id: movementPayload.userId,
+        p_payload: movementPayload,
+      });
+      if (rpcErr) throw rpcErr;
+      // RPC returned success and canonical movement
+      const savedMovement = rpcData as any;
+      // refresh local cache from remote
+      await loadRemoteToLocal();
+      return savedMovement as StockMovement;
+    } catch (rpcError) {
+      // RPC not available or failed — fallback to manual sequence with rollback
+      try {
+        // 1) create movement row remotely
+        const created = await createMovementInSupabase(movementPayload);
+        // 2) compute updated product with reduced stock
+        const updatedProduct = { ...product } as Product;
+        if (variant) {
+          updatedProduct.variants = (updatedProduct.variants || []).map(v => v.id === variant.id ? { ...v, quantity: Number(v.quantity || 0) - Number(quantity) } : v);
+        } else {
+          // distribute reduction across variants (take from first variants)
+          let remaining = Number(quantity);
+          updatedProduct.variants = (updatedProduct.variants || []).map(v => {
+            if (remaining <= 0) return v;
+            const avail = Number(v.quantity || 0);
+            const take = Math.min(avail, remaining);
+            remaining -= take;
+            return { ...v, quantity: avail - take };
+          });
+        }
+        updatedProduct.totalQuantity = updatedProduct.variants.reduce((acc, v) => acc + (Number(v.quantity) || 0), 0);
+        updatedProduct.updatedAt = new Date().toISOString();
+
+        // 3) update product remotely
+        try {
+          await updateProductStockInSupabase(product.id, updatedProduct);
+        } catch (updErr) {
+          // rollback: delete created movement
+          try { await deleteMovementInSupabase(movementPayload.id); } catch (delErr) {
+            console.error('registerSale rollback failed: could not delete movement after product update failure', { movementId: movementPayload.id, productId: product.id, err: delErr });
+          }
+          throw updErr;
+        }
+
+        // 4) on success, refresh local cache and return movement
+        await loadRemoteToLocal();
+        // find movement in local cache
+        const localMov = getMovements().find(m => m.id === movementPayload.id) || created;
+        return localMov as StockMovement;
+      } catch (manualErr) {
+        console.error('registerSale manual flow failed', manualErr, { movementPayload, product, variant, quantity });
+        throw manualErr;
+      }
+    }
+  } else {
+    // Offline/local-only flow: create movement locally (existing behavior)
+    const created = createMovement({
+      productId: movementPayload.productId,
+      variantId: movementPayload.variantId,
+      type: 'exit',
+      quantity: movementPayload.quantity,
+      reason: movementPayload.reason,
+      notes: movementPayload.notes,
+      userId: movementPayload.userId,
+    } as any);
+    return created;
+  }
+}
+
 // Movement operations
 export function createMovement(data: Omit<StockMovement, 'id' | 'createdAt' | 'previousQuantity' | 'newQuantity'>): StockMovement | null {
-  const products = getProducts();
-  const productIndex = products.findIndex(p => p.id === data.productId);
-  if (productIndex === -1) return null;
+  try {
+    const products = getProducts();
+    const productIndex = products.findIndex(p => p.id === data.productId);
+    if (productIndex === -1) {
+      console.error('createMovement failed: product not found', { productId: data.productId, data });
+      return null;
+    }
 
-  const product = products[productIndex];
-  let previousQuantity = 0;
-  let newQuantity = 0;
-  // determine pricing info
-  let unitPrice = product.salePrice || 0;
-  let costPrice = product.costPrice || 0;
+    let product = products[productIndex];
+    // ensure normalized
+    product = normalizeProduct(product);
+    let previousQuantity = 0;
+    let newQuantity = 0;
+    // determine pricing info
+    let unitPrice = Number(product.salePrice) || 0;
+    let costPrice = Number(product.costPrice) || 0;
   if (data.variantId) {
     const variant = product.variants.find(v => v.id === data.variantId);
     if (variant) {
@@ -173,25 +551,39 @@ export function createMovement(data: Omit<StockMovement, 'id' | 'createdAt' | 'p
   }
 
   // validations
-  if (data.quantity <= 0) return null;
-
-  if (data.variantId) {
-    const variantIndex = product.variants.findIndex(v => v.id === data.variantId);
-    if (variantIndex === -1) return null;
-    previousQuantity = product.variants[variantIndex].quantity;
-
-    if (data.type === 'entry' || data.type === 'return') {
-      newQuantity = previousQuantity + data.quantity;
-    } else if (data.type === 'exit') {
-      // prevent selling more than available
-      if (data.quantity > previousQuantity) return null;
-      newQuantity = previousQuantity - data.quantity;
-    } else if (data.type === 'adjustment') {
-      newQuantity = data.quantity;
+    const qty = Number(data.quantity);
+    if (!Number.isFinite(qty) || qty <= 0) {
+      console.error('createMovement failed: invalid quantity', { productId: data.productId, variantId: data.variantId, quantity: data.quantity });
+      return null;
     }
 
-    product.variants[variantIndex].quantity = newQuantity;
-  } else {
+    if (data.variantId) {
+      const variantIndex = product.variants.findIndex(v => v.id === data.variantId);
+      if (variantIndex === -1) {
+        console.error('createMovement failed: variant not found', { productId: data.productId, variantId: data.variantId });
+        return null;
+      }
+      const variant = product.variants[variantIndex];
+      previousQuantity = Number(variant.quantity) || 0;
+      // pricing from variant if present
+      unitPrice = Number(variant.salePrice) || unitPrice;
+      costPrice = Number(variant.costPrice) || costPrice;
+
+      if (data.type === 'entry' || data.type === 'return') {
+        newQuantity = previousQuantity + qty;
+      } else if (data.type === 'exit') {
+        // prevent selling more than available
+        if (qty > previousQuantity) {
+          console.error('createMovement failed: insufficient stock', { productId: data.productId, variantId: data.variantId, requested: qty, available: previousQuantity });
+          return null;
+        }
+        newQuantity = previousQuantity - qty;
+      } else if (data.type === 'adjustment') {
+        newQuantity = qty;
+      }
+
+      product.variants[variantIndex].quantity = newQuantity;
+    } else {
     previousQuantity = product.totalQuantity;
     if (data.type === 'entry' || data.type === 'return') {
       newQuantity = previousQuantity + data.quantity;
@@ -203,43 +595,47 @@ export function createMovement(data: Omit<StockMovement, 'id' | 'createdAt' | 'p
       newQuantity = data.quantity;
     }
     // Distribute proportionally across variants
-    if (product.variants.length > 0) {
-      const diff = newQuantity - previousQuantity;
-      const perVariant = Math.floor(Math.abs(diff) / product.variants.length);
-      product.variants.forEach((v, i) => {
-        if (diff > 0) {
-          product.variants[i].quantity += perVariant;
-        } else {
-          product.variants[i].quantity = Math.max(0, v.quantity - perVariant);
-        }
-      });
-    }
+      if (product.variants.length > 0) {
+        const diff = newQuantity - previousQuantity;
+        const perVariant = Math.floor(Math.abs(diff) / product.variants.length || 0);
+        product.variants.forEach((v, i) => {
+          if (diff > 0) {
+            product.variants[i].quantity = Number(v.quantity || 0) + perVariant;
+          } else {
+            product.variants[i].quantity = Math.max(0, Number(v.quantity || 0) - perVariant);
+          }
+        });
+      }
   }
 
-  product.totalQuantity = product.variants.reduce((acc, v) => acc + v.quantity, 0);
+    product.totalQuantity = product.variants.reduce((acc, v) => acc + (Number(v.quantity) || 0), 0);
   product.updatedAt = new Date().toISOString();
   products[productIndex] = product;
   saveProducts(products);
 
-  const movement: StockMovement = {
-    ...data,
-    id: generateId('mov'),
-    previousQuantity,
-    newQuantity,
-    createdAt: new Date().toISOString(),
-    unitPrice,
-    costPrice,
-    totalValue: Number((unitPrice * data.quantity).toFixed(2)),
-    productName: product.name,
-    product: product,
-    variant: data.variantId ? product.variants.find(v => v.id === data.variantId) : undefined,
-  };
+    const movement: StockMovement = {
+      ...data,
+      id: generateId('mov'),
+      previousQuantity,
+      newQuantity,
+      createdAt: new Date().toISOString(),
+      unitPrice,
+      costPrice,
+      totalValue: Number((unitPrice * qty).toFixed(2)),
+      productName: product.name,
+      product: product,
+      variant: data.variantId ? product.variants.find(v => v.id === data.variantId) : undefined,
+    };
 
   const movements = getMovements();
-  movements.unshift(movement);
-  saveMovements(movements);
-  checkStockAlerts(product);
-  return movement;
+    movements.unshift(movement);
+    saveMovements(movements);
+    checkStockAlerts(product);
+    return movement;
+  } catch (err) {
+    console.error('createMovement unexpected error', err, { data });
+    return null;
+  }
 }
 
 // Alert operations
@@ -365,7 +761,8 @@ export async function loadRemoteToLocal(): Promise<void> {
 
     // If remote has data, prefer it and write to local cache
     if (hasRemoteProducts) {
-      saveProducts(remoteProducts as Product[]);
+      // normalize remote products before saving locally
+      try { saveProducts((remoteProducts || []).map(normalizeProduct)); } catch (_) { saveProducts(remoteProducts as Product[]); }
     }
     if (hasRemoteMovements) {
       saveMovements(remoteMovements as StockMovement[]);
@@ -373,15 +770,7 @@ export async function loadRemoteToLocal(): Promise<void> {
     if (remoteBrands) saveBrands(remoteBrands as Brand[]);
     if (remoteCategories) saveCategories(remoteCategories as Category[]);
 
-    // If remote is empty but local has data, push local -> remote (initial sync)
-    const localProducts = getProducts();
-    const localMovements = getMovements();
-    if (!hasRemoteProducts && localProducts && localProducts.length > 0) {
-      try { await supabase.from('products').upsert(localProducts); } catch (_) { }
-    }
-    if (!hasRemoteMovements && localMovements && localMovements.length > 0) {
-      try { await supabase.from('movements').upsert(localMovements); } catch (_) { }
-    }
+    // Do NOT auto-push local -> remote when remote is empty. Manual migration only.
   } catch (e) {
     // ignore
   }

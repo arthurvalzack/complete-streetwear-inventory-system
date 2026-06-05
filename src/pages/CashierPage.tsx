@@ -3,6 +3,7 @@ import toast from 'react-hot-toast';
 import { format, parseISO } from 'date-fns';
 import { DollarSign, ShoppingBag, Trash2 } from 'lucide-react';
 import { useStore } from '../store/useStore';
+import { registerSale } from '../lib/database';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
@@ -58,32 +59,33 @@ export function CashierPage() {
     if (!quantity || quantity <= 0) return toast.error('Quantidade inválida');
     setLoading(true);
     try {
-      // validate stock availability
+      // validate stock availability and pricing
       const prod = products.find(p => p.id === productId);
       if (!prod) { toast.error('Produto não encontrado'); setLoading(false); return; }
-      if (variantId) {
-        const variant = prod.variants.find(v => v.id === variantId);
-        if (!variant) { toast.error('Variante não encontrada'); setLoading(false); return; }
-        if (quantity > variant.quantity) { toast.error('Quantidade maior que o estoque da variante'); setLoading(false); return; }
-      } else {
-        if (quantity > prod.totalQuantity) { toast.error('Quantidade maior que o estoque do produto'); setLoading(false); return; }
-      }
-      const movement = await addMovement({
-        productId,
-        variantId,
-        type: 'exit',
-        quantity,
-        reason: 'Venda',
-        notes: '',
-        userId: user?.id || 'user_admin_001',
-      });
-      if (movement) {
-        toast.success('Venda registrada');
-        setQuantity(1);
-        setProductId('');
-        setVariantId(undefined);
-      } else {
-        toast.error('Falha ao registrar venda');
+      const variant = variantId ? prod.variants.find(v => v.id === variantId) : undefined;
+      const availableStock = variant ? Number(variant.quantity || 0) : Number(prod.totalQuantity || 0);
+      if (quantity > availableStock) { toast.error('Quantidade maior que o estoque disponível'); setLoading(false); return; }
+      const unitPrice = variant?.salePrice ?? prod.salePrice ?? 0;
+      const costPrice = variant?.costPrice ?? prod.costPrice ?? 0;
+      if (!unitPrice || Number(unitPrice) <= 0) { toast.error('Preço de venda inválido'); setLoading(false); return; }
+
+      // call central registerSale which ensures transactional consistency with Supabase
+      try {
+        const saved = await registerSale({ productId, variantId, quantity, userId: user?.id, reason: 'Venda', notes: '' });
+        if (saved) {
+          toast.success('Venda registrada');
+          setQuantity(1);
+          setProductId('');
+          setVariantId(undefined);
+          // refresh local state from storage/remote
+          try { useStore.getState().loadData(); } catch (_) { /* ignore */ }
+        } else {
+          toast.error('Falha ao registrar venda');
+        }
+      } catch (err: any) {
+        // detailed debug
+        console.error('Erro ao registrar venda', { selectedProduct: prod, selectedVariant: variant, quantity, availableStock, unitPrice, totalValue: (unitPrice * quantity), movementPayload: { productId, variantId, quantity, unitPrice, costPrice }, err });
+        toast.error('Não foi possível registrar a venda no banco de dados.');
       }
     } catch (e) {
       toast.error('Erro ao processar venda');
