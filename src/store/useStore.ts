@@ -129,12 +129,14 @@ export const useStore = create<AppState>()(
           const brands = getBrands();
           const categories = getCategories();
           const alerts = getAlerts();
+          const storeConfig = getStoreConfig();
           set(state => {
             state.products = products;
             state.movements = movements;
             state.brands = brands;
             state.categories = categories;
             state.alerts = alerts;
+            state.storeConfig = storeConfig;
           });
         }).catch(() => {
           const products = getProducts();
@@ -142,12 +144,14 @@ export const useStore = create<AppState>()(
           const brands = getBrands();
           const categories = getCategories();
           const alerts = getAlerts();
+          const storeConfig = getStoreConfig();
           set(state => {
             state.products = products;
             state.movements = movements;
             state.brands = brands;
             state.categories = categories;
             state.alerts = alerts;
+            state.storeConfig = storeConfig;
           });
         });
     },

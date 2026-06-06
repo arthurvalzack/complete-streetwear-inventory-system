@@ -1,30 +1,59 @@
--- Políticas recomendadas para a tabela app_state
--- ATENÇÃO: revise antes de aplicar em produção.
+-- RLS policies for the inventory app.
+-- The app uses local authentication, so anon/authenticated must be able to read/write.
 
--- Habilita RLS
-ALTER TABLE IF EXISTS app_state ENABLE ROW LEVEL SECURITY;
+do $$
+declare
+  v_table_name text;
+  policy_action text;
+begin
+  foreach v_table_name in array array[
+    'app_state',
+    'brands',
+    'categories',
+    'products',
+    'movements',
+    'alerts',
+    'store_config',
+    'catalog_config'
+  ]
+  loop
+    execute format('alter table %I enable row level security', v_table_name);
 
--- 1) Política de leitura pública (permite SELECT para todos)
-CREATE POLICY IF NOT EXISTS "allow_select_public" ON app_state
-  FOR SELECT
-  USING (true);
-
--- 2) Política de gravação segura (recomendada): apenas usuários autenticados
--- Para usar esta política, habilite autenticação no seu app e use a chave anon
--- NOTA: auth.role() retorna 'authenticated' para usuários logados no Supabase Auth
-CREATE POLICY IF NOT EXISTS "allow_mod_auth_users" ON app_state
-  FOR ALL
-  USING (auth.role() = 'authenticated')
-  WITH CHECK (auth.role() = 'authenticated');
-
--- 3) Política de desenvolvimento (fácil, NÃO RECOMENDADA em produção): permite upsert via anon key
--- Descomente apenas para ambiente de desenvolvimento local quando necessário.
---
--- CREATE POLICY IF NOT EXISTS "allow_mod_anon_dev" ON app_state
---   FOR ALL
---   USING (true)
---   WITH CHECK (true);
-
--- Observação:
--- - Para operações via API com a anon key, a política acima (dev) permite alteração direta.
--- - Em produção, prefira criar usuários via Supabase Auth e manter a política "allow_mod_auth_users".
+    foreach policy_action in array array['select', 'insert', 'update', 'delete']
+    loop
+      if not exists (
+        select 1
+        from pg_policies
+        where schemaname = 'public'
+          and tablename = v_table_name
+          and policyname = format('allow_%s_%s', policy_action, v_table_name)
+      ) then
+        if policy_action = 'select' then
+          execute format(
+            'create policy %I on %I for select to anon, authenticated using (true)',
+            format('allow_%s_%s', policy_action, v_table_name),
+            v_table_name
+          );
+        elsif policy_action = 'insert' then
+          execute format(
+            'create policy %I on %I for insert to anon, authenticated with check (true)',
+            format('allow_%s_%s', policy_action, v_table_name),
+            v_table_name
+          );
+        elsif policy_action = 'update' then
+          execute format(
+            'create policy %I on %I for update to anon, authenticated using (true) with check (true)',
+            format('allow_%s_%s', policy_action, v_table_name),
+            v_table_name
+          );
+        elsif policy_action = 'delete' then
+          execute format(
+            'create policy %I on %I for delete to anon, authenticated using (true)',
+            format('allow_%s_%s', policy_action, v_table_name),
+            v_table_name
+          );
+        end if;
+      end if;
+    end loop;
+  end loop;
+end $$;

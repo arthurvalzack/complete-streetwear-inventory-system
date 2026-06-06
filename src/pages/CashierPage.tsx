@@ -3,7 +3,7 @@ import toast from 'react-hot-toast';
 import { format, parseISO } from 'date-fns';
 import { DollarSign, ShoppingBag, Trash2 } from 'lucide-react';
 import { useStore } from '../store/useStore';
-import { registerSale } from '../lib/database';
+import { getAlerts, getMovements, getProducts, registerSale } from '../lib/database';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
@@ -69,7 +69,7 @@ export function CashierPage() {
       const costPrice = variant?.costPrice ?? prod.costPrice ?? 0;
       if (!unitPrice || Number(unitPrice) <= 0) { toast.error('Preço de venda inválido'); setLoading(false); return; }
 
-      // call central registerSale which ensures transactional consistency with Supabase
+      // register locally first; Supabase sync is best-effort.
       try {
         const saved = await registerSale({ productId, variantId, quantity, userId: user?.id, reason: 'Venda', notes: '' });
         if (saved) {
@@ -77,8 +77,11 @@ export function CashierPage() {
           setQuantity(1);
           setProductId('');
           setVariantId(undefined);
-          // refresh local state from storage/remote
-          try { useStore.getState().loadData(); } catch (_) { /* ignore */ }
+          useStore.setState({
+            products: getProducts(),
+            movements: getMovements(),
+            alerts: getAlerts(),
+          });
         } else {
           toast.error('Falha ao registrar venda');
         }

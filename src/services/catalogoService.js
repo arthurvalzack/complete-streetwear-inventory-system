@@ -1,5 +1,11 @@
+import { syncAllToRemote } from '../lib/database';
+
 const CATALOG_ITEMS_KEY = 'frazon_catalogo_items';
 const CATALOG_CONFIG_KEY = 'catalogoConfig';
+
+function syncCatalogRemote() {
+  syncAllToRemote().catch(error => console.error('[SUPABASE SYNC ERROR]', error));
+}
 
 function parseJSON(value, fallback) {
   if (!value) return fallback;
@@ -33,6 +39,7 @@ export function getCatalogoItems() {
 
 export function saveCatalogoItems(items) {
   localStorage.setItem(CATALOG_ITEMS_KEY, JSON.stringify(items));
+  syncCatalogRemote();
   return items;
 }
 
@@ -60,6 +67,7 @@ export function updateCatalogoConfig(data) {
     updatedAt: new Date().toISOString(),
   };
   localStorage.setItem(CATALOG_CONFIG_KEY, JSON.stringify(config));
+  syncCatalogRemote();
   return config;
 }
 
