@@ -99,7 +99,7 @@ export function MovementsPage() {
       key: 'type',
       header: 'Tipo',
       render: (m: StockMovement) => {
-        const config = movementTypeConfig[m.type];
+        const config = movementTypeConfig[m.type] || movementTypeConfig.exit;
         return (
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: config.color }}>

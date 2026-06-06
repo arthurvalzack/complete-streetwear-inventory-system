@@ -301,9 +301,15 @@ export function productFromSupabase(row: any): Product {
 }
 
 export function movementToSupabase(m: any): any {
+  const quantity = Number(m.quantity || 0);
+  const unitPrice = Number(m.unitPrice ?? m.unit_price ?? 0);
+  const costPrice = Number(m.costPrice ?? m.cost_price ?? 0);
+  const totalAmount = Number(m.totalAmount ?? m.total_amount ?? m.totalValue ?? m.total_value ?? (unitPrice * quantity) ?? 0);
+  const totalCost = Number(m.totalCost ?? m.total_cost ?? (costPrice * quantity) ?? 0);
+  const totalProfit = Number(m.totalProfit ?? m.total_profit ?? m.profit ?? (totalAmount - totalCost) ?? 0);
   return {
     id: m.id,
-    type: m.type || 'sale',
+    type: m.type || 'exit',
     product_id: m.productId || m.product_id,
     product_name: m.productName || m.product_name,
     brand_name: m.brand || m.brand_name || null,
@@ -312,16 +318,20 @@ export function movementToSupabase(m: any): any {
     variant_id: m.variantId || m.variant_id || null,
     size: m.size || null,
     color: m.color || null,
-    quantity: m.quantity,
-    unit_price: m.unitPrice ?? m.unit_price ?? 0,
-    cost_price: m.costPrice ?? m.cost_price ?? 0,
-    total_value: m.totalValue ?? m.total_value ?? 0,
-    profit: m.profit ?? 0,
+    quantity,
+    unit_price: unitPrice,
+    cost_price: costPrice,
+    total_amount: totalAmount,
+    total_cost: totalCost,
+    total_profit: totalProfit,
+    total_value: totalAmount,
+    profit: totalProfit,
     product_snapshot: m.product_snapshot || m.product || null,
     reason: m.reason || null,
     notes: m.notes || null,
     user_id: m.userId || m.user_id || null,
     created_at: m.createdAt || new Date().toISOString(),
+    updated_at: m.updatedAt || m.createdAt || new Date().toISOString(),
     date: m.date || new Date().toISOString(),
   };
 }
@@ -336,9 +346,9 @@ export function movementFromSupabase(row: any): StockMovement {
   })();
   const mv: any = {
     id: row.id,
-    type: row.type,
+    type: row.type || 'exit',
     productId: row.product_id,
-    productName: row.product_name,
+    productName: row.product_name || prodSnapshot?.name || row.product_id || 'Produto',
     brand: row.brand_name,
     category: row.category_name,
     subcategory: row.subcategory_name,
@@ -348,13 +358,17 @@ export function movementFromSupabase(row: any): StockMovement {
     quantity: Number(row.quantity || 0),
     unitPrice: Number(row.unit_price || 0),
     costPrice: Number(row.cost_price || 0),
-    totalValue: Number(row.total_value || 0),
-    profit: Number(row.profit || 0),
+    totalValue: Number(row.total_amount ?? row.total_value ?? 0),
+    totalAmount: Number(row.total_amount ?? row.total_value ?? 0),
+    totalCost: Number(row.total_cost ?? 0),
+    totalProfit: Number(row.total_profit ?? row.profit ?? 0),
+    profit: Number(row.total_profit ?? row.profit ?? 0),
     product_snapshot: prodSnapshot,
     reason: row.reason,
     notes: row.notes,
     userId: row.user_id,
     createdAt: row.created_at || row.createdAt || new Date().toISOString(),
+    updatedAt: row.updated_at || row.created_at || row.createdAt || new Date().toISOString(),
   };
   return mv as StockMovement;
 }
@@ -512,6 +526,18 @@ async function createMovementInSupabase(mov: any) {
   return data;
 }
 
+async function upsertMovementToSupabase(movement: StockMovement): Promise<void> {
+  if (!isSupabaseConfigured || !supabase) return;
+  const { error } = await supabase.from('movements').upsert([movementToSupabase(movement)]);
+  if (error) throw error;
+}
+
+async function upsertProductToSupabase(product: Product): Promise<void> {
+  if (!isSupabaseConfigured || !supabase) return;
+  const { error } = await supabase.from('products').upsert([productToSupabase(product)]);
+  if (error) throw error;
+}
+
 async function deleteMovementInSupabase(movementId: string) {
   if (!isSupabaseConfigured || !supabase) throw new Error('Supabase not configured');
   const { error } = await supabase.from('movements').delete().eq('id', movementId);
@@ -557,7 +583,29 @@ export async function registerSale(params: {
   } as any);
 
   if (created && isSupabaseConfigured) {
-    syncAllToRemote().catch((error) => console.error('[SUPABASE SYNC ERROR]', error));
+    const updatedProduct = getProductById(productId);
+    const remoteWrites: Promise<void>[] = [];
+
+    if (updatedProduct) {
+      remoteWrites.push(
+        upsertProductToSupabase(updatedProduct)
+          .catch((error) => console.error('[SUPABASE SALE PRODUCT UPDATE ERROR]', error))
+      );
+    } else {
+      console.error('[SUPABASE SALE PRODUCT UPDATE ERROR]', { productId, error: 'Updated product not found locally after sale' });
+    }
+
+    remoteWrites.push(
+      upsertMovementToSupabase(created)
+        .catch((error) => console.error('[SUPABASE SALE MOVEMENT INSERT ERROR]', error))
+    );
+
+    remoteWrites.push(
+      saveAppStateToSupabase(getFullLocalState())
+        .catch((error) => console.error('[SUPABASE SALE SYNC ERROR]', error))
+    );
+
+    await Promise.allSettled(remoteWrites);
   }
 
   return created;
@@ -675,6 +723,14 @@ export function createMovement(data: Omit<StockMovement, 'id' | 'createdAt' | 'p
     movements.unshift(movement);
     saveMovements(movements);
     checkStockAlerts(product);
+    if (isSupabaseConfigured && !suppressRemoteSync) {
+      upsertProductToSupabase(product)
+        .catch((error) => console.error('[SUPABASE SALE PRODUCT UPDATE ERROR]', error));
+      upsertMovementToSupabase(movement)
+        .catch((error) => console.error('[SUPABASE SALE MOVEMENT INSERT ERROR]', error));
+      saveAppStateToSupabase(getFullLocalState())
+        .catch((error) => console.error('[SUPABASE SALE SYNC ERROR]', error));
+    }
     return movement;
   } catch (err) {
     console.error('createMovement unexpected error', err, { data });
@@ -857,10 +913,6 @@ export async function loadRemoteToLocal(): Promise<void> {
   if (!isSupabaseConfigured || !supabase) return;
   try {
     const appState = await loadAppStateFromSupabase();
-    if (appState) {
-      applyRemoteStateToLocal(appState);
-      return;
-    }
 
     // Check remote products table
     let remoteProducts = null;
@@ -908,6 +960,8 @@ export async function loadRemoteToLocal(): Promise<void> {
 
     const hasRemoteProducts = Array.isArray(remoteProducts) && remoteProducts.length > 0;
     const hasRemoteMovements = Array.isArray(remoteMovements) && remoteMovements.length > 0;
+    const hasAppStateProducts = Array.isArray(appState?.products) && appState.products.length > 0;
+    const hasAppStateMovements = Array.isArray(appState?.movements) && appState.movements.length > 0;
 
     // If remote has data, prefer it and write to local cache
     suppressRemoteSync = true;
@@ -917,12 +971,18 @@ export async function loadRemoteToLocal(): Promise<void> {
         console.error('[SUPABASE LOAD ERROR]', error);
         saveProducts(remoteProducts as Product[]);
       }
+    } else if (hasAppStateProducts) {
+      saveProducts((appState.products || []).map(normalizeProduct));
     }
     if (hasRemoteMovements) {
       saveMovements((remoteMovements || []).map(movementFromSupabase));
+    } else if (hasAppStateMovements) {
+      saveMovements(appState.movements as StockMovement[]);
     }
-    if (remoteBrands) saveBrands(remoteBrands as Brand[]);
-    if (remoteCategories) saveCategories(remoteCategories as Category[]);
+    if (remoteBrands && remoteBrands.length > 0) saveBrands(remoteBrands as Brand[]);
+    else if (Array.isArray(appState?.brands)) saveBrands(appState.brands as Brand[]);
+    if (remoteCategories && remoteCategories.length > 0) saveCategories(remoteCategories as Category[]);
+    else if (Array.isArray(appState?.categories)) saveCategories(appState.categories as Category[]);
     if (remoteAlerts) {
       saveAlerts((remoteAlerts || []).map((alert: any) => ({
         id: alert.id,
@@ -932,6 +992,8 @@ export async function loadRemoteToLocal(): Promise<void> {
         createdAt: alert.created_at || new Date().toISOString(),
         read: !!alert.read,
       })));
+    } else if (Array.isArray(appState?.alerts)) {
+      saveAlerts(appState.alerts as Alert[]);
     }
     if (remoteStoreConfig) {
       safeSetLocalStorage(STORE_CONFIG_KEY, JSON.stringify({
@@ -940,10 +1002,15 @@ export async function loadRemoteToLocal(): Promise<void> {
         createdAt: remoteStoreConfig.created_at || new Date().toISOString(),
         updatedAt: remoteStoreConfig.updated_at || new Date().toISOString(),
       }));
+    } else if (appState?.storeConfig) {
+      safeSetLocalStorage(STORE_CONFIG_KEY, JSON.stringify(appState.storeConfig));
     }
     if (remoteCatalogConfig) {
       safeSetLocalStorage(CATALOG_ITEMS_KEY, JSON.stringify(remoteCatalogConfig.items || []));
       safeSetLocalStorage(CATALOG_CONFIG_KEY, JSON.stringify(remoteCatalogConfig.config || {}));
+    } else if (appState?.catalog) {
+      if (appState.catalog.items) safeSetLocalStorage(CATALOG_ITEMS_KEY, JSON.stringify(appState.catalog.items));
+      if (appState.catalog.config) safeSetLocalStorage(CATALOG_CONFIG_KEY, JSON.stringify(appState.catalog.config));
     }
     suppressRemoteSync = false;
 

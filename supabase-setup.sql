@@ -99,6 +99,9 @@ create table if not exists movements (
   quantity integer not null default 0,
   unit_price numeric not null default 0,
   cost_price numeric not null default 0,
+  total_amount numeric not null default 0,
+  total_cost numeric not null default 0,
+  total_profit numeric not null default 0,
   total_value numeric not null default 0,
   profit numeric not null default 0,
   product_snapshot jsonb,
@@ -106,6 +109,7 @@ create table if not exists movements (
   notes text,
   user_id text,
   created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
   date timestamptz not null default now()
 );
 
@@ -121,6 +125,9 @@ alter table movements add column if not exists color text;
 alter table movements add column if not exists quantity integer not null default 0;
 alter table movements add column if not exists unit_price numeric not null default 0;
 alter table movements add column if not exists cost_price numeric not null default 0;
+alter table movements add column if not exists total_amount numeric not null default 0;
+alter table movements add column if not exists total_cost numeric not null default 0;
+alter table movements add column if not exists total_profit numeric not null default 0;
 alter table movements add column if not exists total_value numeric not null default 0;
 alter table movements add column if not exists profit numeric not null default 0;
 alter table movements add column if not exists product_snapshot jsonb;
@@ -128,6 +135,7 @@ alter table movements add column if not exists reason text;
 alter table movements add column if not exists notes text;
 alter table movements add column if not exists user_id text;
 alter table movements add column if not exists created_at timestamptz not null default now();
+alter table movements add column if not exists updated_at timestamptz not null default now();
 alter table movements add column if not exists date timestamptz not null default now();
 create unique index if not exists movements_id_uidx on movements (id);
 create index if not exists movements_product_id_idx on movements (product_id);
