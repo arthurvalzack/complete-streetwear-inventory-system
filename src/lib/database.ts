@@ -15,6 +15,44 @@ const APP_STATE_ID = 'global';
 
 // When true, avoid syncing local changes up to remote (used during initial seeding)
 let suppressRemoteSync = false;
+const memoryCache: Record<string, string> = {};
+
+function safeGetLocalStorage(key: string): string | null {
+  try {
+    return memoryCache[key] ?? localStorage.getItem(key) ?? null;
+  } catch (error) {
+    console.error('[LOCAL STORAGE READ ERROR]', error);
+    return memoryCache[key] ?? null;
+  }
+}
+
+function safeSetLocalStorage(key: string, value: string): boolean {
+  memoryCache[key] = value;
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch (error) {
+    console.warn('[LOCAL STORAGE WRITE ERROR]', { key, error });
+    return false;
+  }
+}
+
+function safeSetLocalStorageOnly(key: string, value: string): boolean {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch (error) {
+    console.warn('[LOCAL STORAGE WRITE ERROR]', { key, error });
+    return false;
+  }
+}
+
+function stripLargeBase64Images(products: Product[]): Product[] {
+  return products.map(product => ({
+    ...product,
+    images: (product.images || []).filter(image => typeof image === 'string' && !image.startsWith('data:')),
+  }));
+}
 // Utility functions
 function generateId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -29,7 +67,7 @@ function generateSKU(brandSlug: string, categorySlug: string, index: number): st
 
 // Data retrieval
 export function getProducts(): Product[] {
-  const raw = localStorage.getItem(PRODUCTS_KEY);
+  const raw = safeGetLocalStorage(PRODUCTS_KEY);
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw);
@@ -48,6 +86,8 @@ export function normalizeProduct(p: any): Product {
   if (prod.salePrice === undefined && prod.sellingPrice !== undefined) prod.salePrice = Number(prod.sellingPrice);
   prod.salePrice = prod.salePrice ? Number(prod.salePrice) : 0;
   prod.costPrice = prod.costPrice ? Number(prod.costPrice) : 0;
+  prod.images = Array.isArray(prod.images) ? prod.images.filter((image: any) => typeof image === 'string') : (prod.image ? [String(prod.image)] : []);
+  prod.tags = Array.isArray(prod.tags) ? prod.tags : [];
   prod.variants = Array.isArray(prod.variants) ? prod.variants.map((v: any) => ({
     ...v,
     quantity: Number(v.quantity) || 0,
@@ -57,58 +97,67 @@ export function normalizeProduct(p: any): Product {
   prod.totalQuantity = prod.variants.reduce((acc: number, v: any) => acc + (Number(v.quantity) || 0), 0);
   // ensure id and slug exist
   prod.id = prod.id || generateId('prod');
+  prod.name = prod.name || 'Produto';
+  prod.sku = prod.sku || '';
+  prod.status = prod.status || 'active';
+  prod.createdAt = prod.createdAt || new Date().toISOString();
+  prod.updatedAt = prod.updatedAt || new Date().toISOString();
   prod.slug = prod.slug || (prod.name ? prod.name.toLowerCase().replace(/\s+/g, '-') : 'product');
   return prod as Product;
 }
 
 export function getMovements(): StockMovement[] {
-  const raw = localStorage.getItem(MOVEMENTS_KEY);
+  const raw = safeGetLocalStorage(MOVEMENTS_KEY);
   if (!raw) return [];
   try { return JSON.parse(raw); } catch { return []; }
 }
 
 export function getBrands(): Brand[] {
-  const raw = localStorage.getItem(BRANDS_KEY);
+  const raw = safeGetLocalStorage(BRANDS_KEY);
   if (!raw) return [];
   try { return JSON.parse(raw); } catch { return []; }
 }
 
 export function getCategories(): Category[] {
-  const raw = localStorage.getItem(CATEGORIES_KEY);
+  const raw = safeGetLocalStorage(CATEGORIES_KEY);
   if (!raw) return [];
   try { return JSON.parse(raw); } catch { return []; }
 }
 
 export function getAlerts(): Alert[] {
-  const raw = localStorage.getItem(ALERTS_KEY);
+  const raw = safeGetLocalStorage(ALERTS_KEY);
   if (!raw) return [];
   try { return JSON.parse(raw); } catch { return []; }
 }
 
 // Data saving
 function saveProducts(products: Product[]): void {
-  localStorage.setItem(PRODUCTS_KEY, JSON.stringify(products));
+  const serialized = JSON.stringify(products);
+  memoryCache[PRODUCTS_KEY] = serialized;
+  if (!safeSetLocalStorageOnly(PRODUCTS_KEY, serialized)) {
+    safeSetLocalStorageOnly(PRODUCTS_KEY, JSON.stringify(stripLargeBase64Images(products)));
+  }
   // try sync to remote
   if (isSupabaseConfigured && !suppressRemoteSync) syncAllToRemote().catch((error) => console.error('[SUPABASE SYNC ERROR]', error));
 }
 
 function saveMovements(movements: StockMovement[]): void {
-  localStorage.setItem(MOVEMENTS_KEY, JSON.stringify(movements));
+  safeSetLocalStorage(MOVEMENTS_KEY, JSON.stringify(movements));
   if (isSupabaseConfigured && !suppressRemoteSync) syncAllToRemote().catch((error) => console.error('[SUPABASE SYNC ERROR]', error));
 }
 
 function saveBrands(brands: Brand[]): void {
-  localStorage.setItem(BRANDS_KEY, JSON.stringify(brands));
+  safeSetLocalStorage(BRANDS_KEY, JSON.stringify(brands));
   if (isSupabaseConfigured && !suppressRemoteSync) syncAllToRemote().catch((error) => console.error('[SUPABASE SYNC ERROR]', error));
 }
 
 function saveCategories(categories: Category[]): void {
-  localStorage.setItem(CATEGORIES_KEY, JSON.stringify(categories));
+  safeSetLocalStorage(CATEGORIES_KEY, JSON.stringify(categories));
   if (isSupabaseConfigured && !suppressRemoteSync) syncAllToRemote().catch((error) => console.error('[SUPABASE SYNC ERROR]', error));
 }
 
 function saveAlerts(alerts: Alert[]): void {
-  localStorage.setItem(ALERTS_KEY, JSON.stringify(alerts));
+  safeSetLocalStorage(ALERTS_KEY, JSON.stringify(alerts));
   if (isSupabaseConfigured && !suppressRemoteSync) syncAllToRemote().catch((error) => console.error('[SUPABASE SYNC ERROR]', error));
 }
 
@@ -305,13 +354,13 @@ export function movementFromSupabase(row: any): StockMovement {
     reason: row.reason,
     notes: row.notes,
     userId: row.user_id,
-    createdAt: row.created_at,
+    createdAt: row.created_at || row.createdAt || new Date().toISOString(),
   };
   return mv as StockMovement;
 }
 
 function getCatalogItemsLocal(): string[] {
-  const raw = localStorage.getItem(CATALOG_ITEMS_KEY);
+  const raw = safeGetLocalStorage(CATALOG_ITEMS_KEY);
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw);
@@ -322,7 +371,7 @@ function getCatalogItemsLocal(): string[] {
 }
 
 function getCatalogConfigLocal(): Record<string, any> | null {
-  const raw = localStorage.getItem(CATALOG_CONFIG_KEY);
+  const raw = safeGetLocalStorage(CATALOG_CONFIG_KEY);
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw);
@@ -355,9 +404,9 @@ function applyRemoteStateToLocal(state: Record<string, any>): void {
     if (Array.isArray(state.brands)) saveBrands(state.brands as Brand[]);
     if (Array.isArray(state.categories)) saveCategories(state.categories as Category[]);
     if (Array.isArray(state.alerts)) saveAlerts(state.alerts as Alert[]);
-    if (state.storeConfig) localStorage.setItem(STORE_CONFIG_KEY, JSON.stringify(state.storeConfig));
-    if (state.catalog?.items) localStorage.setItem(CATALOG_ITEMS_KEY, JSON.stringify(state.catalog.items));
-    if (state.catalog?.config) localStorage.setItem(CATALOG_CONFIG_KEY, JSON.stringify(state.catalog.config));
+    if (state.storeConfig) safeSetLocalStorage(STORE_CONFIG_KEY, JSON.stringify(state.storeConfig));
+    if (state.catalog?.items) safeSetLocalStorage(CATALOG_ITEMS_KEY, JSON.stringify(state.catalog.items));
+    if (state.catalog?.config) safeSetLocalStorage(CATALOG_CONFIG_KEY, JSON.stringify(state.catalog.config));
   } finally {
     suppressRemoteSync = false;
   }
@@ -487,15 +536,15 @@ export async function registerSale(params: {
   notes?: string;
 }): Promise<StockMovement | null> {
   const { productId, variantId, quantity, userId, reason = 'Venda', notes = '' } = params;
-  // validations (local cache source-of-truth when supabase not available)
   if (!productId) throw new Error('productId required');
   if (!quantity || Number(quantity) <= 0) throw new Error('quantity must be > 0');
 
   const localProduct = getProductById(productId);
-  if (!localProduct) throw new Error('Produto nÃ£o encontrado');
+  if (!localProduct) throw new Error('Produto nao encontrado');
+
   const localVariant = variantId ? (localProduct.variants || []).find(v => v.id === variantId) : undefined;
-  const localAvailableStock = localVariant ? Number(localVariant.quantity || 0) : Number(localProduct.totalQuantity || 0);
-  if (quantity > localAvailableStock) throw new Error('Quantidade maior que o estoque disponÃ­vel');
+  const availableStock = localVariant ? Number(localVariant.quantity || 0) : Number(localProduct.totalQuantity || 0);
+  if (quantity > availableStock) throw new Error('Quantidade maior que o estoque disponivel');
 
   const created = createMovement({
     productId,
@@ -512,130 +561,7 @@ export async function registerSale(params: {
   }
 
   return created;
-
-  // get authoritative product (prefer remote)
-  let product: Product | null = null;
-  if (isSupabaseConfigured && supabase) {
-    product = await fetchProductRemote(productId);
-  }
-  if (!product) product = getProductById(productId);
-  if (!product) throw new Error('Produto não encontrado');
-
-  // find variant and available stock
-  const variant = variantId ? (product.variants || []).find(v => v.id === variantId) : undefined;
-  const availableStock = variant ? Number(variant.quantity || 0) : Number(product.totalQuantity || 0);
-  if (quantity > availableStock) throw new Error('Quantidade maior que o estoque disponível');
-
-  // determine pricing
-  const unitPrice = variant?.salePrice ?? product.salePrice ?? 0;
-  const costPrice = variant?.costPrice ?? product.costPrice ?? 0;
-  const totalValue = Number((unitPrice * quantity).toFixed(2));
-  const profit = Number((totalValue - (costPrice * quantity)).toFixed(2));
-
-  // build movement payload
-  const movementPayload: any = {
-    id: generateId('mov'),
-    type: 'sale',
-    productId: product.id,
-    productName: product.name,
-    brand: product.brand?.name || product.brandName || null,
-    category: product.category?.name || product.categoryName || null,
-    subcategory: product.subcategory?.name || product.subcategoryName || null,
-    variantId: variant?.id || null,
-    size: variant?.size || null,
-    color: variant?.color || null,
-    quantity: Number(quantity),
-    unitPrice: Number(unitPrice),
-    costPrice: Number(costPrice),
-    totalValue,
-    profit,
-    product_snapshot: { ...product },
-    createdAt: new Date().toISOString(),
-    date: new Date().toISOString(),
-    reason,
-    notes,
-    userId: userId || 'system',
-  };
-
-  if (isSupabaseConfigured && supabase) {
-    // Try RPC first (recommended). If RPC exists on server it should perform transactional update.
-    try {
-      const { data: rpcData, error: rpcErr } = await supabase.rpc('register_sale', {
-        p_product_id: movementPayload.productId,
-        p_variant_id: movementPayload.variantId,
-        p_quantity: movementPayload.quantity,
-        p_unit_price: movementPayload.unitPrice,
-        p_cost_price: movementPayload.costPrice,
-        p_movement_id: movementPayload.id,
-        p_user_id: movementPayload.userId,
-        p_payload: movementPayload,
-      });
-      if (rpcErr) throw rpcErr;
-      // RPC returned success and canonical movement
-      const savedMovement = rpcData as any;
-      // refresh local cache from remote
-      await loadRemoteToLocal();
-      return savedMovement as StockMovement;
-    } catch (rpcError) {
-      console.error('[SUPABASE MOVEMENTS ERROR]', rpcError);
-      // RPC not available or failed — fallback to manual sequence with rollback
-      try {
-        // 1) create movement row remotely
-        const created = await createMovementInSupabase(movementPayload);
-        // 2) compute updated product with reduced stock
-        const updatedProduct = { ...product } as Product;
-        if (variant) {
-          updatedProduct.variants = (updatedProduct.variants || []).map(v => v.id === variant.id ? { ...v, quantity: Number(v.quantity || 0) - Number(quantity) } : v);
-        } else {
-          // distribute reduction across variants (take from first variants)
-          let remaining = Number(quantity);
-          updatedProduct.variants = (updatedProduct.variants || []).map(v => {
-            if (remaining <= 0) return v;
-            const avail = Number(v.quantity || 0);
-            const take = Math.min(avail, remaining);
-            remaining -= take;
-            return { ...v, quantity: avail - take };
-          });
-        }
-        updatedProduct.totalQuantity = updatedProduct.variants.reduce((acc, v) => acc + (Number(v.quantity) || 0), 0);
-        updatedProduct.updatedAt = new Date().toISOString();
-
-        // 3) update product remotely
-        try {
-          await updateProductStockInSupabase(product.id, updatedProduct);
-        } catch (updErr) {
-          // rollback: delete created movement
-          try { await deleteMovementInSupabase(movementPayload.id); } catch (delErr) {
-            console.error('registerSale rollback failed: could not delete movement after product update failure', { movementId: movementPayload.id, productId: product.id, err: delErr });
-          }
-          throw updErr;
-        }
-
-        // 4) on success, refresh local cache and return movement
-        await loadRemoteToLocal();
-        // find movement in local cache
-        const localMov = getMovements().find(m => m.id === movementPayload.id) || created;
-        return localMov as StockMovement;
-      } catch (manualErr) {
-        console.error('registerSale manual flow failed', manualErr, { movementPayload, product, variant, quantity });
-        throw manualErr;
-      }
-    }
-  } else {
-    // Offline/local-only flow: create movement locally (existing behavior)
-    const created = createMovement({
-      productId: movementPayload.productId,
-      variantId: movementPayload.variantId,
-      type: 'exit',
-      quantity: movementPayload.quantity,
-      reason: movementPayload.reason,
-      notes: movementPayload.notes,
-      userId: movementPayload.userId,
-    } as any);
-    return created;
-  }
 }
-
 // Movement operations
 export function createMovement(data: Omit<StockMovement, 'id' | 'createdAt' | 'previousQuantity' | 'newQuantity'>): StockMovement | null {
   try {
@@ -795,7 +721,7 @@ export function markAllAlertsRead(): void {
 
 // Store config operations
 export function getStoreConfig(): StoreConfig {
-  const raw = localStorage.getItem(STORE_CONFIG_KEY);
+  const raw = safeGetLocalStorage(STORE_CONFIG_KEY);
   if (!raw) {
     return {
       storeName: 'FRAZON STORE',
@@ -821,7 +747,7 @@ export function updateStoreConfig(data: Partial<StoreConfig>): StoreConfig {
     ...data,
     updatedAt: new Date().toISOString(),
   };
-  localStorage.setItem(STORE_CONFIG_KEY, JSON.stringify(updated));
+  safeSetLocalStorage(STORE_CONFIG_KEY, JSON.stringify(updated));
   if (isSupabaseConfigured) syncAllToRemote().catch((error) => console.error('[SUPABASE SYNC ERROR]', error));
   return updated;
 }
@@ -920,7 +846,7 @@ export async function syncAllToRemote(): Promise<void> {
     });
 
     // record last sync time for UI
-    try { localStorage.setItem('stck_last_sync', new Date().toISOString()); } catch (error) { console.error('[SUPABASE SYNC ERROR]', error); }
+    safeSetLocalStorage('stck_last_sync', new Date().toISOString());
   } catch (e) {
     console.error('[SUPABASE SYNC ERROR]', e);
     // fail silently — keep working offline
@@ -1008,7 +934,7 @@ export async function loadRemoteToLocal(): Promise<void> {
       })));
     }
     if (remoteStoreConfig) {
-      localStorage.setItem(STORE_CONFIG_KEY, JSON.stringify({
+      safeSetLocalStorage(STORE_CONFIG_KEY, JSON.stringify({
         storeName: remoteStoreConfig.store_name || 'FRAZON STORE',
         logoUrl: remoteStoreConfig.logo_url || undefined,
         createdAt: remoteStoreConfig.created_at || new Date().toISOString(),
@@ -1016,8 +942,8 @@ export async function loadRemoteToLocal(): Promise<void> {
       }));
     }
     if (remoteCatalogConfig) {
-      localStorage.setItem(CATALOG_ITEMS_KEY, JSON.stringify(remoteCatalogConfig.items || []));
-      localStorage.setItem(CATALOG_CONFIG_KEY, JSON.stringify(remoteCatalogConfig.config || {}));
+      safeSetLocalStorage(CATALOG_ITEMS_KEY, JSON.stringify(remoteCatalogConfig.items || []));
+      safeSetLocalStorage(CATALOG_CONFIG_KEY, JSON.stringify(remoteCatalogConfig.config || {}));
     }
     suppressRemoteSync = false;
 
@@ -1065,9 +991,9 @@ export async function importState(state: Record<string, any>, options?: { overwr
   if (Array.isArray(brands)) saveBrands(brands as Brand[]);
   if (Array.isArray(categories)) saveCategories(categories as Category[]);
   if (Array.isArray(alerts)) saveAlerts(alerts as Alert[]);
-  if (storeConfig) localStorage.setItem(STORE_CONFIG_KEY, JSON.stringify(storeConfig));
-  if (catalog?.items) localStorage.setItem(CATALOG_ITEMS_KEY, JSON.stringify(catalog.items));
-  if (catalog?.config) localStorage.setItem(CATALOG_CONFIG_KEY, JSON.stringify(catalog.config));
+  if (storeConfig) safeSetLocalStorage(STORE_CONFIG_KEY, JSON.stringify(storeConfig));
+  if (catalog?.items) safeSetLocalStorage(CATALOG_ITEMS_KEY, JSON.stringify(catalog.items));
+  if (catalog?.config) safeSetLocalStorage(CATALOG_CONFIG_KEY, JSON.stringify(catalog.config));
 
   if (isSupabaseConfigured && supabase) {
     if (options?.overwriteRemote) {
@@ -1288,7 +1214,7 @@ export function seedDatabase(): void {
   // Never run seed in production builds
   if (import.meta.env.PROD) return;
 
-  if (localStorage.getItem(INITIALIZED_KEY)) return;
+  if (safeGetLocalStorage(INITIALIZED_KEY)) return;
 
   // Avoid pushing demo data to remote during initial seeding
   suppressRemoteSync = true;
@@ -1661,5 +1587,5 @@ export function seedDatabase(): void {
 
   // Re-enable remote sync after seeding
   suppressRemoteSync = false;
-  localStorage.setItem(INITIALIZED_KEY, 'true');
+  safeSetLocalStorage(INITIALIZED_KEY, 'true');
 }

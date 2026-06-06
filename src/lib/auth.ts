@@ -5,6 +5,33 @@ const USERS_KEY = 'stck_users';
 const TOKEN_KEY = 'stck_token';
 const SESSION_KEY = 'stck_session';
 
+function safeGetItem(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch (error) {
+    console.error('[LOCAL STORAGE READ ERROR]', { key, error });
+    return null;
+  }
+}
+
+function safeSetItem(key: string, value: string): boolean {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch (error) {
+    console.warn('[LOCAL STORAGE WRITE ERROR]', { key, error });
+    return false;
+  }
+}
+
+function safeRemoveItem(key: string): void {
+  try {
+    localStorage.removeItem(key);
+  } catch (error) {
+    console.error('[LOCAL STORAGE REMOVE ERROR]', { key, error });
+  }
+}
+
 // Simple hash function (production would use bcrypt via API)
 function simpleHash(str: string): string {
   let hash = 0;
@@ -49,13 +76,13 @@ interface StoredUser {
 }
 
 function getStoredUsers(): StoredUser[] {
-  const raw = localStorage.getItem(USERS_KEY);
+  const raw = safeGetItem(USERS_KEY);
   if (!raw) return [];
   try { return JSON.parse(raw); } catch { return []; }
 }
 
 function saveStoredUsers(users: StoredUser[]): void {
-  localStorage.setItem(USERS_KEY, JSON.stringify(users));
+  safeSetItem(USERS_KEY, JSON.stringify(users));
 }
 
 export function initializeAuth(): void {
@@ -100,19 +127,19 @@ export function login(email: string, password: string): LoginResult {
     createdAt: user.createdAt,
   };
   const token = createToken({ userId: user.id, email: user.email, role: user.role });
-  localStorage.setItem(TOKEN_KEY, token);
-  localStorage.setItem(SESSION_KEY, JSON.stringify(publicUser));
+  safeSetItem(TOKEN_KEY, token);
+  safeSetItem(SESSION_KEY, JSON.stringify(publicUser));
   return { success: true, user: publicUser, token };
 }
 
 export function logout(): void {
-  localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(SESSION_KEY);
+  safeRemoveItem(TOKEN_KEY);
+  safeRemoveItem(SESSION_KEY);
 }
 
 export function getSession(): { user: User | null; token: string | null } {
-  const token = localStorage.getItem(TOKEN_KEY);
-  const sessionRaw = localStorage.getItem(SESSION_KEY);
+  const token = safeGetItem(TOKEN_KEY);
+  const sessionRaw = safeGetItem(SESSION_KEY);
   if (!token || !sessionRaw) return { user: null, token: null };
   const { valid } = verifyToken(token);
   if (!valid) {

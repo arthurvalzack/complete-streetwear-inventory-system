@@ -7,6 +7,25 @@ function syncCatalogRemote() {
   syncAllToRemote().catch(error => console.error('[SUPABASE SYNC ERROR]', error));
 }
 
+function safeGetItem(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch (error) {
+    console.error('[LOCAL STORAGE READ ERROR]', { key, error });
+    return null;
+  }
+}
+
+function safeSetItem(key, value) {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch (error) {
+    console.warn('[LOCAL STORAGE WRITE ERROR]', { key, error });
+    return false;
+  }
+}
+
 function parseJSON(value, fallback) {
   if (!value) return fallback;
   try {
@@ -34,11 +53,11 @@ function decodeCatalogoPayload(encoded) {
 }
 
 export function getCatalogoItems() {
-  return parseJSON(localStorage.getItem(CATALOG_ITEMS_KEY), []);
+  return parseJSON(safeGetItem(CATALOG_ITEMS_KEY), []);
 }
 
 export function saveCatalogoItems(items) {
-  localStorage.setItem(CATALOG_ITEMS_KEY, JSON.stringify(items));
+  safeSetItem(CATALOG_ITEMS_KEY, JSON.stringify(items));
   syncCatalogRemote();
   return items;
 }
@@ -52,7 +71,7 @@ export function getCatalogoConfig() {
     updatedAt: new Date().toISOString(),
   };
 
-  const stored = parseJSON(localStorage.getItem(CATALOG_CONFIG_KEY), defaultConfig);
+  const stored = parseJSON(safeGetItem(CATALOG_CONFIG_KEY), defaultConfig);
   return {
     ...defaultConfig,
     ...stored,
@@ -66,7 +85,7 @@ export function updateCatalogoConfig(data) {
     ...data,
     updatedAt: new Date().toISOString(),
   };
-  localStorage.setItem(CATALOG_CONFIG_KEY, JSON.stringify(config));
+  safeSetItem(CATALOG_CONFIG_KEY, JSON.stringify(config));
   syncCatalogRemote();
   return config;
 }

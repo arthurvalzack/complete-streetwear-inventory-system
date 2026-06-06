@@ -78,7 +78,7 @@ export function DashboardPage() {
     };
 
     const calcForDate = (dateStr: string) => {
-      const dayMovs = movements.filter((m: any) => m.createdAt && m.createdAt.startsWith(dateStr) && isSale(m));
+      const dayMovs = movements.filter((m: any) => typeof m.createdAt === 'string' && m.createdAt.startsWith(dateStr) && isSale(m));
       let total = 0;
       let profit = 0;
       let transactions = 0;
@@ -121,7 +121,7 @@ export function DashboardPage() {
     const days = Array.from({ length: 7 }, (_, i) => {
       const date = subDays(new Date(), 6 - i);
       const dateStr = format(date, 'yyyy-MM-dd');
-      const dayMovements = movements.filter(m => m.createdAt.startsWith(dateStr));
+      const dayMovements = movements.filter(m => typeof m.createdAt === 'string' && m.createdAt.startsWith(dateStr));
       return {
         date: format(date, 'EEE', { locale: ptBR }),
         Entradas: dayMovements.filter(m => m.type === 'entry').reduce((acc, m) => acc + m.quantity, 0),

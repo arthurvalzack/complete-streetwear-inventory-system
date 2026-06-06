@@ -31,7 +31,7 @@ export function CashierPage() {
       try {
         return format(parseISO(m.createdAt), 'yyyy-MM-dd') === today && isSale(m);
       } catch (e) {
-        return m.createdAt.startsWith(today) && isSale(m);
+        return typeof m.createdAt === 'string' && m.createdAt.startsWith(today) && isSale(m);
       }
     });
   }, [movements]);

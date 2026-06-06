@@ -141,7 +141,13 @@ function App() {
         // Ensure base taxonomy exists even if seed is disabled in production
         await ensureBaseTaxonomy();
         // If after loading remote there is still no local data, seed demo data only in dev.
-        const hasLocal = getProducts().length > 0 || !!localStorage.getItem('stck_db_initialized');
+        let initialized = false;
+        try {
+          initialized = !!localStorage.getItem('stck_db_initialized');
+        } catch (error) {
+          console.error('[LOCAL STORAGE READ ERROR]', error);
+        }
+        const hasLocal = getProducts().length > 0 || initialized;
         if (!hasLocal && import.meta.env.DEV) seedDatabase();
       } else {
         await ensureBaseTaxonomy();

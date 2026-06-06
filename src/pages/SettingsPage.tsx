@@ -9,12 +9,21 @@ import { Modal } from '../components/ui/Modal';
 import { exportState, importState, syncAllToRemote, loadRemoteToLocal, getCategories, createCategory, addSubcategory, deleteCategory } from '../lib/database';
 import { isSupabaseConfigured } from '../lib/supabase';
 
+function getLastSyncSafe() {
+  try {
+    return localStorage.getItem('stck_last_sync') || null;
+  } catch (error) {
+    console.error('[LOCAL STORAGE READ ERROR]', error);
+    return null;
+  }
+}
+
 export function SettingsPage() {
   const { storeConfig, updateStoreConfig } = useStore();
   const [isEditing, setIsEditing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [logoPreview, setLogoPreview] = useState<string | null>(storeConfig.logoUrl || null);
-  const [lastSync, setLastSync] = useState<string | null>(localStorage.getItem('stck_last_sync') || null);
+  const [lastSync, setLastSync] = useState<string | null>(getLastSyncSafe());
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -283,7 +292,7 @@ export function SettingsPage() {
             setSyncing(true);
             try {
               await syncAllToRemote();
-              const ts = localStorage.getItem('stck_last_sync') || new Date().toISOString();
+              const ts = getLastSyncSafe() || new Date().toISOString();
               setLastSync(ts);
               toast.success('Sincronização enviada ao Supabase');
               useStore.getState().loadData();

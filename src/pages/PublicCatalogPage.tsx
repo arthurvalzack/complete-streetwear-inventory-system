@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { MapPin } from 'lucide-react';
-import { getProducts, getStoreConfig } from '../lib/database';
+import { getProducts, getStoreConfig, loadRemoteToLocal } from '../lib/database';
 import { getCatalogoItems, getCatalogoConfig, parseCatalogoShareParam } from '../services/catalogoService';
 import { Product, StoreConfig } from '../types';
 import { Button } from '../components/ui/Button';
@@ -18,7 +18,8 @@ export function PublicCatalogPage() {
   const location = useLocation();
   const [storeConfig, setStoreConfig] = useState<StoreConfig>(getStoreConfig());
 
-  const loadCatalog = () => {
+  const loadCatalog = async () => {
+    await loadRemoteToLocal().catch(error => console.error('[SUPABASE LOAD ERROR]', error));
     const sharedCatalog = parseCatalogoShareParam(location.search);
     const catalogIds = sharedCatalog?.ids ?? getCatalogoItems();
     const allProducts = (sharedCatalog?.products ?? getProducts()) as Product[];
@@ -43,7 +44,7 @@ export function PublicCatalogPage() {
       }
     };
 
-    const handleFocus = () => loadCatalog();
+    const handleFocus = () => { loadCatalog(); };
 
     window.addEventListener('storage', handleStorage);
     window.addEventListener('focus', handleFocus);

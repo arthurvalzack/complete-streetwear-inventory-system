@@ -9,6 +9,23 @@ import { Card } from '../components/ui/Card';
 import { Modal } from '../components/ui/Modal';
 import { createCatalogoShareLink, getCatalogoConfig, getCatalogoItems, toggleCatalogoProduct, removeProductFromCatalog, updateCatalogoConfig } from '../services/catalogoService';
 
+function getCatalogShareBaseUrl() {
+  try {
+    return localStorage.getItem('catalogShareBaseUrl') || window.location.origin;
+  } catch (error) {
+    console.error('[LOCAL STORAGE READ ERROR]', error);
+    return window.location.origin;
+  }
+}
+
+function saveCatalogShareBaseUrl(baseUrl: string) {
+  try {
+    localStorage.setItem('catalogShareBaseUrl', baseUrl);
+  } catch (error) {
+    console.warn('[LOCAL STORAGE WRITE ERROR]', error);
+  }
+}
+
 export function AdminCatalogPage() {
   const navigate = useNavigate();
   const { products, loadData } = useStore();
@@ -23,7 +40,7 @@ export function AdminCatalogPage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [copyStatus, setCopyStatus] = useState('Copiar link 📋');
   const [baseUrl, setBaseUrl] = useState<string>(() => {
-    return localStorage.getItem('catalogShareBaseUrl') || window.location.origin;
+    return getCatalogShareBaseUrl();
   });
 
   useEffect(() => {
@@ -221,10 +238,10 @@ export function AdminCatalogPage() {
                 type="text"
                 value={baseUrl}
                 onChange={e => setBaseUrl(e.target.value)}
-                onBlur={() => localStorage.setItem('catalogShareBaseUrl', baseUrl)}
+                onBlur={() => saveCatalogShareBaseUrl(baseUrl)}
                 className="input-dark w-full rounded-xl px-3.5 py-2.5 text-sm text-white/70 bg-white/5"
               />
-              <Button variant="primary" onClick={() => { localStorage.setItem('catalogShareBaseUrl', baseUrl); toast.success('Base URL salva'); }}>
+              <Button variant="primary" onClick={() => { saveCatalogShareBaseUrl(baseUrl); toast.success('Base URL salva'); }}>
                 Salvar
               </Button>
             </div>
