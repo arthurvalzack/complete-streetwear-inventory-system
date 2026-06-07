@@ -1,10 +1,10 @@
-import { syncAllToRemote } from '../lib/database';
+import { syncCatalogToSupabase } from '../lib/database';
 
 const CATALOG_ITEMS_KEY = 'frazon_catalogo_items';
 const CATALOG_CONFIG_KEY = 'catalogoConfig';
 
 function syncCatalogRemote() {
-  syncAllToRemote().catch(error => console.error('[SUPABASE SYNC ERROR]', error));
+  syncCatalogToSupabase(getCatalogoItems(), getCatalogoConfig()).catch(error => console.error('[SUPABASE CATALOG ERROR]', error));
 }
 
 function safeGetItem(key) {
@@ -30,7 +30,8 @@ function parseJSON(value, fallback) {
   if (!value) return fallback;
   try {
     return JSON.parse(value);
-  } catch {
+  } catch (error) {
+    console.error('[CATALOG JSON PARSE ERROR]', error);
     return fallback;
   }
 }
@@ -38,7 +39,8 @@ function parseJSON(value, fallback) {
 function encodeCatalogoPayload(payload) {
   try {
     return btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
-  } catch {
+  } catch (error) {
+    console.error('[CATALOG ENCODE ERROR]', error);
     return '';
   }
 }
@@ -47,7 +49,8 @@ function decodeCatalogoPayload(encoded) {
   if (!encoded) return null;
   try {
     return JSON.parse(decodeURIComponent(escape(atob(encoded))));
-  } catch {
+  } catch (error) {
+    console.error('[CATALOG DECODE ERROR]', error);
     return null;
   }
 }

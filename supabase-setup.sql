@@ -56,6 +56,7 @@ create table if not exists products (
   status text not null default 'active',
   variants jsonb not null default '[]'::jsonb,
   tags jsonb not null default '[]'::jsonb,
+  min_stock integer not null default 0,
   total_quantity integer not null default 0,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -77,6 +78,7 @@ alter table products add column if not exists sale_price numeric not null defaul
 alter table products add column if not exists status text not null default 'active';
 alter table products add column if not exists variants jsonb not null default '[]'::jsonb;
 alter table products add column if not exists tags jsonb not null default '[]'::jsonb;
+alter table products add column if not exists min_stock integer not null default 0;
 alter table products add column if not exists total_quantity integer not null default 0;
 alter table products add column if not exists created_at timestamptz not null default now();
 alter table products add column if not exists updated_at timestamptz not null default now();

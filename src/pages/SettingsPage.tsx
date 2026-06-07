@@ -104,7 +104,14 @@ export function SettingsPage() {
           </div>
           <div>
             <Button onClick={() => { useStore.getState().loadData(); toast.success('Atualizado'); }}>Atualizar</Button>
-            <Button className="ml-2" onClick={() => { syncAllToRemote().then(() => toast.success('Sincronizado')); }}>Sincronizar</Button>
+            <Button className="ml-2" onClick={() => {
+              syncAllToRemote()
+                .then(() => toast.success('Sincronizado'))
+                .catch((error) => {
+                  console.error('[SUPABASE SYNC ERROR]', error);
+                  toast.error('Falha ao sincronizar com Supabase');
+                });
+            }}>Sincronizar</Button>
           </div>
         </div>
 
@@ -128,7 +135,6 @@ export function SettingsPage() {
                         const ok = await deleteCategory(cat.id);
                         if (ok) {
                           useStore.getState().loadData();
-                          await syncAllToRemote();
                           toast.success('Categoria excluída');
                         } else {
                           toast.error('Não é possível excluir esta categoria porque existem produtos vinculados.');
@@ -149,7 +155,6 @@ export function SettingsPage() {
                             const ok = await deleteSubcategory(cat.id, s.id);
                             if (ok) {
                               useStore.getState().loadData();
-                              await syncAllToRemote();
                               toast.success('Subcategoria excluída');
                             } else {
                               toast.error('Não é possível excluir esta subcategoria porque existem produtos vinculados.');
@@ -168,7 +173,6 @@ export function SettingsPage() {
                       await addSubcategory(cat.id, val);
                       el!.value = '';
                       useStore.getState().loadData();
-                      await syncAllToRemote();
                       toast.success('Subcategoria adicionada');
                     }}>Adicionar</Button>
                   </div>

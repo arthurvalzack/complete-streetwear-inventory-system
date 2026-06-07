@@ -137,28 +137,36 @@ function saveProducts(products: Product[]): void {
   if (!safeSetLocalStorageOnly(PRODUCTS_KEY, serialized)) {
     safeSetLocalStorageOnly(PRODUCTS_KEY, JSON.stringify(stripLargeBase64Images(products)));
   }
-  // try sync to remote
-  if (isSupabaseConfigured && !suppressRemoteSync) syncAllToRemote().catch((error) => console.error('[SUPABASE SYNC ERROR]', error));
 }
 
 function saveMovements(movements: StockMovement[]): void {
   safeSetLocalStorage(MOVEMENTS_KEY, JSON.stringify(movements));
-  if (isSupabaseConfigured && !suppressRemoteSync) syncAllToRemote().catch((error) => console.error('[SUPABASE SYNC ERROR]', error));
 }
 
 function saveBrands(brands: Brand[]): void {
   safeSetLocalStorage(BRANDS_KEY, JSON.stringify(brands));
-  if (isSupabaseConfigured && !suppressRemoteSync) syncAllToRemote().catch((error) => console.error('[SUPABASE SYNC ERROR]', error));
 }
 
 function saveCategories(categories: Category[]): void {
   safeSetLocalStorage(CATEGORIES_KEY, JSON.stringify(categories));
-  if (isSupabaseConfigured && !suppressRemoteSync) syncAllToRemote().catch((error) => console.error('[SUPABASE SYNC ERROR]', error));
 }
 
 function saveAlerts(alerts: Alert[]): void {
   safeSetLocalStorage(ALERTS_KEY, JSON.stringify(alerts));
-  if (isSupabaseConfigured && !suppressRemoteSync) syncAllToRemote().catch((error) => console.error('[SUPABASE SYNC ERROR]', error));
+}
+
+async function upsertAlertsToSupabase(alerts: Alert[]): Promise<void> {
+  if (!isSupabaseConfigured || !supabase) return;
+  const rows = alerts.map(alert => ({
+    id: alert.id,
+    type: alert.type,
+    message: alert.message,
+    product_id: alert.productId || null,
+    created_at: alert.createdAt,
+    read: alert.read,
+  }));
+  const { error } = await supabase.from('alerts').upsert(rows);
+  if (error) throw error;
 }
 
 // Product operations
@@ -189,6 +197,9 @@ export function createProduct(data: Omit<Product, 'id' | 'sku' | 'createdAt' | '
   products.push(product);
   saveProducts(products);
   checkStockAlerts(product);
+  if (isSupabaseConfigured && !suppressRemoteSync) {
+    upsertProductToSupabase(product).catch((error) => console.error('[SUPABASE PRODUCTS ERROR]', error));
+  }
   return product;
 }
 
@@ -208,6 +219,9 @@ export function updateProduct(id: string, data: Partial<Product>): Product | nul
   products[index] = updated;
   saveProducts(products);
   checkStockAlerts(updated);
+  if (isSupabaseConfigured && !suppressRemoteSync) {
+    upsertProductToSupabase(updated).catch((error) => console.error('[SUPABASE PRODUCTS ERROR]', error));
+  }
   return updated;
 }
 
@@ -216,6 +230,9 @@ export function deleteProduct(id: string): boolean {
   const filtered = products.filter(p => p.id !== id);
   if (filtered.length === products.length) return false;
   saveProducts(filtered);
+  if (isSupabaseConfigured && !suppressRemoteSync) {
+    deleteProductInSupabase(id).catch((error) => console.error('[SUPABASE PRODUCTS ERROR]', error));
+  }
   return true;
 }
 
@@ -251,6 +268,7 @@ export function productToSupabase(p: Product): any {
     status: p.status,
     variants: p.variants || [],
     tags: p.tags || [],
+    min_stock: (p as any).minStock ?? (p as any).min_stock ?? 0,
     total_quantity: p.totalQuantity ?? 0,
     created_at: p.createdAt,
     updated_at: p.updatedAt,
@@ -292,6 +310,7 @@ export function productFromSupabase(row: any): Product {
       salePrice: Number(v.salePrice ?? v.sale_price ?? row.sale_price ?? 0),
     })),
     totalQuantity: Number(row.total_quantity ?? 0),
+    minStock: Number(row.min_stock ?? 0),
     costPrice: Number(row.cost_price ?? 0),
     salePrice: Number(row.sale_price ?? 0),
     createdAt: row.created_at || new Date().toISOString(),
@@ -312,27 +331,17 @@ export function movementToSupabase(m: any): any {
     type: m.type || 'exit',
     product_id: m.productId || m.product_id,
     product_name: m.productName || m.product_name,
-    brand_name: m.brand || m.brand_name || null,
-    category_name: m.category || m.category_name || null,
-    subcategory_name: m.subcategory || m.subcategory_name || null,
     variant_id: m.variantId || m.variant_id || null,
-    size: m.size || null,
-    color: m.color || null,
     quantity,
     unit_price: unitPrice,
-    cost_price: costPrice,
     total_amount: totalAmount,
     total_cost: totalCost,
     total_profit: totalProfit,
-    total_value: totalAmount,
-    profit: totalProfit,
-    product_snapshot: m.product_snapshot || m.product || null,
     reason: m.reason || null,
     notes: m.notes || null,
     user_id: m.userId || m.user_id || null,
     created_at: m.createdAt || new Date().toISOString(),
     updated_at: m.updatedAt || m.createdAt || new Date().toISOString(),
-    date: m.date || new Date().toISOString(),
   };
 }
 
@@ -538,6 +547,13 @@ async function upsertProductToSupabase(product: Product): Promise<void> {
   if (error) throw error;
 }
 
+async function deleteProductInSupabase(productId: string) {
+  if (!isSupabaseConfigured || !supabase) throw new Error('Supabase not configured');
+  const { error } = await supabase.from('products').delete().eq('id', productId);
+  if (error) throw error;
+  return true;
+}
+
 async function deleteMovementInSupabase(movementId: string) {
   if (!isSupabaseConfigured || !supabase) throw new Error('Supabase not configured');
   const { error } = await supabase.from('movements').delete().eq('id', movementId);
@@ -552,7 +568,7 @@ async function updateProductStockInSupabase(productId: string, updatedProduct: P
   return data;
 }
 
-// registerSale: cashier sale entrypoint. Local storage is the source of truth; Supabase sync is best-effort.
+// registerSale: cashier sale entrypoint. Local state is updated first; configured Supabase must persist the sale before success.
 export async function registerSale(params: {
   productId: string;
   variantId?: string;
@@ -572,40 +588,44 @@ export async function registerSale(params: {
   const availableStock = localVariant ? Number(localVariant.quantity || 0) : Number(localProduct.totalQuantity || 0);
   if (quantity > availableStock) throw new Error('Quantidade maior que o estoque disponivel');
 
-  const created = createMovement({
-    productId,
-    variantId,
-    type: 'exit',
-    quantity: Number(quantity),
-    reason,
-    notes,
-    userId: userId || 'system',
-  } as any);
+  const previousSuppressRemoteSync = suppressRemoteSync;
+  suppressRemoteSync = true;
+  let created: StockMovement | null = null;
+  try {
+    created = createMovement({
+      productId,
+      variantId,
+      type: 'exit',
+      quantity: Number(quantity),
+      reason,
+      notes,
+      userId: userId || 'system',
+    } as any);
+  } finally {
+    suppressRemoteSync = previousSuppressRemoteSync;
+  }
 
   if (created && isSupabaseConfigured) {
     const updatedProduct = getProductById(productId);
-    const remoteWrites: Promise<void>[] = [];
-
-    if (updatedProduct) {
-      remoteWrites.push(
-        upsertProductToSupabase(updatedProduct)
-          .catch((error) => console.error('[SUPABASE SALE PRODUCT UPDATE ERROR]', error))
-      );
-    } else {
-      console.error('[SUPABASE SALE PRODUCT UPDATE ERROR]', { productId, error: 'Updated product not found locally after sale' });
+    if (!updatedProduct) {
+      const error = new Error('Updated product not found locally after sale');
+      console.error('[SUPABASE SALE PRODUCT UPDATE ERROR]', { productId, error });
+      throw error;
     }
 
-    remoteWrites.push(
-      upsertMovementToSupabase(created)
-        .catch((error) => console.error('[SUPABASE SALE MOVEMENT INSERT ERROR]', error))
-    );
+    try {
+      await upsertMovementToSupabase(created);
+    } catch (error) {
+      console.error('[SUPABASE SALE MOVEMENT INSERT ERROR]', error);
+      throw error;
+    }
 
-    remoteWrites.push(
-      saveAppStateToSupabase(getFullLocalState())
-        .catch((error) => console.error('[SUPABASE SALE SYNC ERROR]', error))
-    );
-
-    await Promise.allSettled(remoteWrites);
+    try {
+      await upsertProductToSupabase(updatedProduct);
+    } catch (error) {
+      console.error('[SUPABASE SALE PRODUCT UPDATE ERROR]', error);
+      throw error;
+    }
   }
 
   return created;
@@ -728,8 +748,6 @@ export function createMovement(data: Omit<StockMovement, 'id' | 'createdAt' | 'p
         .catch((error) => console.error('[SUPABASE SALE PRODUCT UPDATE ERROR]', error));
       upsertMovementToSupabase(movement)
         .catch((error) => console.error('[SUPABASE SALE MOVEMENT INSERT ERROR]', error));
-      saveAppStateToSupabase(getFullLocalState())
-        .catch((error) => console.error('[SUPABASE SALE SYNC ERROR]', error));
     }
     return movement;
   } catch (err) {
@@ -763,16 +781,25 @@ function checkStockAlerts(product: Product): void {
     });
   }
   saveAlerts(alerts);
+  if (isSupabaseConfigured && !suppressRemoteSync) {
+    upsertAlertsToSupabase(alerts).catch((error) => console.error('[SUPABASE ALERTS ERROR]', error));
+  }
 }
 
 export function markAlertRead(id: string): void {
   const alerts = getAlerts().map(a => a.id === id ? { ...a, read: true } : a);
   saveAlerts(alerts);
+  if (isSupabaseConfigured && !suppressRemoteSync) {
+    upsertAlertsToSupabase(alerts).catch((error) => console.error('[SUPABASE ALERTS ERROR]', error));
+  }
 }
 
 export function markAllAlertsRead(): void {
   const alerts = getAlerts().map(a => ({ ...a, read: true }));
   saveAlerts(alerts);
+  if (isSupabaseConfigured && !suppressRemoteSync) {
+    upsertAlertsToSupabase(alerts).catch((error) => console.error('[SUPABASE ALERTS ERROR]', error));
+  }
 }
 
 // Store config operations
@@ -804,8 +831,33 @@ export function updateStoreConfig(data: Partial<StoreConfig>): StoreConfig {
     updatedAt: new Date().toISOString(),
   };
   safeSetLocalStorage(STORE_CONFIG_KEY, JSON.stringify(updated));
-  if (isSupabaseConfigured) syncAllToRemote().catch((error) => console.error('[SUPABASE SYNC ERROR]', error));
+  if (isSupabaseConfigured) {
+    upsertStoreConfigToSupabase(updated).catch((error) => console.error('[SUPABASE STORE CONFIG ERROR]', error));
+  }
   return updated;
+}
+
+export async function upsertStoreConfigToSupabase(storeConfig: StoreConfig): Promise<void> {
+  if (!isSupabaseConfigured || !supabase) return;
+  const { error } = await supabase.from('store_config').upsert({
+    id: 'default',
+    store_name: storeConfig.storeName,
+    logo_url: storeConfig.logoUrl || null,
+    created_at: storeConfig.createdAt,
+    updated_at: storeConfig.updatedAt,
+  });
+  if (error) throw error;
+}
+
+export async function syncCatalogToSupabase(items = getCatalogItemsLocal(), config = getCatalogConfigLocal()): Promise<void> {
+  if (!isSupabaseConfigured || !supabase) return;
+  const { error } = await supabase.from('catalog_config').upsert({
+    id: 'default',
+    items,
+    config: config || {},
+    updated_at: new Date().toISOString(),
+  });
+  if (error) throw error;
 }
 
 // Remote sync helpers (simple single-row JSON storage)
@@ -879,13 +931,7 @@ export async function syncAllToRemote(): Promise<void> {
     } catch (error) { console.error('[SUPABASE SYNC ERROR]', error); }
 
     try {
-      const { error } = await supabase.from('catalog_config').upsert({
-        id: 'default',
-        items: catalogItems,
-        config: catalogConfig || {},
-        updated_at: new Date().toISOString(),
-      });
-      if (error) console.error('[SUPABASE SYNC ERROR]', error);
+      await syncCatalogToSupabase(catalogItems, catalogConfig);
     } catch (error) { console.error('[SUPABASE SYNC ERROR]', error); }
 
     await saveAppStateToSupabase({
@@ -912,9 +958,6 @@ export async function syncAllToRemote(): Promise<void> {
 export async function loadRemoteToLocal(): Promise<void> {
   if (!isSupabaseConfigured || !supabase) return;
   try {
-    const appState = await loadAppStateFromSupabase();
-
-    // Check remote products table
     let remoteProducts = null;
     let remoteMovements = null;
     let remoteBrands = null;
@@ -960,29 +1003,19 @@ export async function loadRemoteToLocal(): Promise<void> {
 
     const hasRemoteProducts = Array.isArray(remoteProducts) && remoteProducts.length > 0;
     const hasRemoteMovements = Array.isArray(remoteMovements) && remoteMovements.length > 0;
-    const hasAppStateProducts = Array.isArray(appState?.products) && appState.products.length > 0;
-    const hasAppStateMovements = Array.isArray(appState?.movements) && appState.movements.length > 0;
 
-    // If remote has data, prefer it and write to local cache
     suppressRemoteSync = true;
     if (hasRemoteProducts) {
-      // normalize remote products before saving locally
       try { saveProducts((remoteProducts || []).map(productFromSupabase)); } catch (error) {
         console.error('[SUPABASE LOAD ERROR]', error);
         saveProducts(remoteProducts as Product[]);
       }
-    } else if (hasAppStateProducts) {
-      saveProducts((appState.products || []).map(normalizeProduct));
     }
     if (hasRemoteMovements) {
       saveMovements((remoteMovements || []).map(movementFromSupabase));
-    } else if (hasAppStateMovements) {
-      saveMovements(appState.movements as StockMovement[]);
     }
     if (remoteBrands && remoteBrands.length > 0) saveBrands(remoteBrands as Brand[]);
-    else if (Array.isArray(appState?.brands)) saveBrands(appState.brands as Brand[]);
     if (remoteCategories && remoteCategories.length > 0) saveCategories(remoteCategories as Category[]);
-    else if (Array.isArray(appState?.categories)) saveCategories(appState.categories as Category[]);
     if (remoteAlerts) {
       saveAlerts((remoteAlerts || []).map((alert: any) => ({
         id: alert.id,
@@ -992,8 +1025,6 @@ export async function loadRemoteToLocal(): Promise<void> {
         createdAt: alert.created_at || new Date().toISOString(),
         read: !!alert.read,
       })));
-    } else if (Array.isArray(appState?.alerts)) {
-      saveAlerts(appState.alerts as Alert[]);
     }
     if (remoteStoreConfig) {
       safeSetLocalStorage(STORE_CONFIG_KEY, JSON.stringify({
@@ -1002,15 +1033,10 @@ export async function loadRemoteToLocal(): Promise<void> {
         createdAt: remoteStoreConfig.created_at || new Date().toISOString(),
         updatedAt: remoteStoreConfig.updated_at || new Date().toISOString(),
       }));
-    } else if (appState?.storeConfig) {
-      safeSetLocalStorage(STORE_CONFIG_KEY, JSON.stringify(appState.storeConfig));
     }
     if (remoteCatalogConfig) {
       safeSetLocalStorage(CATALOG_ITEMS_KEY, JSON.stringify(remoteCatalogConfig.items || []));
       safeSetLocalStorage(CATALOG_CONFIG_KEY, JSON.stringify(remoteCatalogConfig.config || {}));
-    } else if (appState?.catalog) {
-      if (appState.catalog.items) safeSetLocalStorage(CATALOG_ITEMS_KEY, JSON.stringify(appState.catalog.items));
-      if (appState.catalog.config) safeSetLocalStorage(CATALOG_CONFIG_KEY, JSON.stringify(appState.catalog.config));
     }
     suppressRemoteSync = false;
 
@@ -1110,6 +1136,11 @@ export function createBrand(data: Omit<Brand, 'id'>): Brand {
   const brand: Brand = { ...data, id: generateId('brand') };
   brands.push(brand);
   saveBrands(brands);
+  if (isSupabaseConfigured && !suppressRemoteSync && supabase) {
+    supabase.from('brands').upsert([brand]).then(({ error }) => {
+      if (error) console.error('[SUPABASE BRANDS ERROR]', error);
+    }).catch((error) => console.error('[SUPABASE BRANDS ERROR]', error));
+  }
   return brand;
 }
 
@@ -1129,6 +1160,11 @@ export function getOrCreateBrand(name: string): Brand {
   };
   brands.push(brand);
   saveBrands(brands);
+  if (isSupabaseConfigured && !suppressRemoteSync && supabase) {
+    supabase.from('brands').upsert([brand]).then(({ error }) => {
+      if (error) console.error('[SUPABASE BRANDS ERROR]', error);
+    }).catch((error) => console.error('[SUPABASE BRANDS ERROR]', error));
+  }
   return brand;
 }
 
@@ -1137,6 +1173,11 @@ export function createCategory(data: Omit<Category, 'id'>): Category {
   const category: Category = { ...data, id: generateId('cat') };
   categories.push(category);
   saveCategories(categories);
+  if (isSupabaseConfigured && !suppressRemoteSync && supabase) {
+    supabase.from('categories').upsert([category]).then(({ error }) => {
+      if (error) console.error('[SUPABASE CATEGORIES ERROR]', error);
+    }).catch((error) => console.error('[SUPABASE CATEGORIES ERROR]', error));
+  }
   return category;
 }
 
@@ -1156,8 +1197,8 @@ export async function addSubcategory(categoryId: string, name: string): Promise<
   if (isSupabaseConfigured && supabase) {
     try {
       const { error } = await supabase.from('categories').upsert([cat]);
-      if (error) console.error('[SUPABASE LOAD ERROR]', error);
-    } catch (error) { console.error('[SUPABASE LOAD ERROR]', error); }
+      if (error) console.error('[SUPABASE CATEGORIES ERROR]', error);
+    } catch (error) { console.error('[SUPABASE CATEGORIES ERROR]', error); }
   }
   return cat;
 }
@@ -1174,9 +1215,9 @@ export async function deleteCategory(id: string): Promise<boolean> {
   saveCategories(filtered);
   if (isSupabaseConfigured && supabase) {
     try {
-      const { error } = await supabase.from('categories').upsert(filtered);
-      if (error) console.error('[SUPABASE LOAD ERROR]', error);
-    } catch (error) { console.error('[SUPABASE LOAD ERROR]', error); }
+      const { error } = await supabase.from('categories').delete().eq('id', id);
+      if (error) console.error('[SUPABASE CATEGORIES ERROR]', error);
+    } catch (error) { console.error('[SUPABASE CATEGORIES ERROR]', error); }
   }
   return true;
 }
@@ -1196,8 +1237,8 @@ export async function deleteSubcategory(categoryId: string, subId: string): Prom
   if (isSupabaseConfigured && supabase) {
     try {
       const { error } = await supabase.from('categories').upsert([cat]);
-      if (error) console.error('[SUPABASE LOAD ERROR]', error);
-    } catch (error) { console.error('[SUPABASE LOAD ERROR]', error); }
+      if (error) console.error('[SUPABASE CATEGORIES ERROR]', error);
+    } catch (error) { console.error('[SUPABASE CATEGORIES ERROR]', error); }
   }
   return true;
 }

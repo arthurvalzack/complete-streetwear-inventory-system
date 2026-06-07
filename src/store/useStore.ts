@@ -138,7 +138,8 @@ export const useStore = create<AppState>()(
             state.alerts = alerts;
             state.storeConfig = storeConfig;
           });
-        }).catch(() => {
+        }).catch((error) => {
+          console.error('[SUPABASE LOAD ERROR]', error);
           const products = getProducts();
           const movements = getMovements();
           const brands = getBrands();
