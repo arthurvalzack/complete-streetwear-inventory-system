@@ -9,6 +9,26 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Table } from '../components/ui/Table';
 
+function safeNumber(value: any, fallback = 0): number {
+  if (value === null || value === undefined || value === '') return fallback;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function movementTotals(m: any) {
+  const qty = safeNumber(m?.quantity, 0);
+  const unitPrice = safeNumber(m?.unitPrice ?? m?.unit_price ?? m?.variant?.salePrice ?? m?.product?.salePrice, 0);
+  const unitCost = safeNumber(m?.unitCost ?? m?.unit_cost ?? m?.costPrice ?? m?.cost_price ?? m?.variant?.costPrice ?? m?.variant?.cost ?? m?.product?.costPrice, 0);
+  const totalAmount = safeNumber(m?.totalAmount ?? m?.total_amount ?? m?.totalValue ?? m?.total_value, unitPrice * qty);
+  const totalCost = safeNumber(m?.totalCost ?? m?.total_cost, unitCost * qty);
+  const totalProfit = safeNumber(m?.totalProfit ?? m?.total_profit ?? m?.profit, totalAmount - totalCost);
+  return { qty, unitPrice, unitCost, totalAmount, totalCost, totalProfit };
+}
+
+function formatBRL(value: any): string {
+  return safeNumber(value, 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
 export function CashierPage() {
   const { products, movements, addMovement, removeMovement, user } = useStore();
   const [productId, setProductId] = useState<string>('');
@@ -41,13 +61,10 @@ export function CashierPage() {
     let profit = 0;
     let items = 0;
     todaysSales.forEach((m: any) => {
-      const qty = Number(m.quantity) || 0;
-      const salePrice = Number(m.unitPrice ?? m.variant?.salePrice ?? m.product?.salePrice ?? 0) || 0;
-      const costPrice = Number(m.costPrice ?? m.variant?.costPrice ?? m.product?.costPrice ?? 0) || 0;
-      const movementTotal = Number(m.totalValue ?? (salePrice * qty)) || 0;
-      total += movementTotal;
-      profit += (movementTotal - (costPrice * qty));
-      items += qty;
+      const values = movementTotals(m);
+      total += values.totalAmount;
+      profit += values.totalProfit;
+      items += values.qty;
     });
     return { total, profit, items, transactions: todaysSales.length };
   }, [todaysSales]);
@@ -65,8 +82,8 @@ export function CashierPage() {
       const variant = variantId ? prod.variants.find(v => v.id === variantId) : undefined;
       const availableStock = variant ? Number(variant.quantity || 0) : Number(prod.totalQuantity || 0);
       if (quantity > availableStock) { toast.error('Quantidade maior que o estoque disponível'); setLoading(false); return; }
-      const unitPrice = variant?.salePrice ?? prod.salePrice ?? 0;
-      const costPrice = variant?.costPrice ?? prod.costPrice ?? 0;
+      const unitPrice = safeNumber(variant?.salePrice ?? prod.salePrice, 0);
+      const costPrice = safeNumber(variant?.costPrice ?? prod.costPrice, 0);
       if (!unitPrice || Number(unitPrice) <= 0) { toast.error('Preço de venda inválido'); setLoading(false); return; }
 
       // register locally first; Supabase sync is best-effort.
@@ -99,11 +116,11 @@ export function CashierPage() {
 
   const columns = [
     { key: 'date', header: 'Data', render: (m: any) => format(new Date(m.createdAt), "dd/MM/yyyy HH:mm") },
-    { key: 'product', header: 'Produto', render: (m: any) => m.product?.name || '—' },
+    { key: 'product', header: 'Produto', render: (m: any) => m.product?.name || m.productName || m.productId || '---' },
     { key: 'qty', header: 'Qtd', render: (m: any) => m.quantity },
-    { key: 'sale', header: 'Valor unit.', render: (m: any) => `R$ ${(Number(m.unitPrice || (m.variant?.salePrice ?? m.product?.salePrice) )).toFixed(2).replace('.', ',')}` },
-    { key: 'cost', header: 'Valor custo', render: (m: any) => `R$ ${(Number(m.costPrice || (m.variant?.costPrice ?? m.product?.costPrice) )).toFixed(2).replace('.', ',')}` },
-    { key: 'total', header: 'Total', render: (m: any) => `R$ ${((Number(m.totalValue) || (Number(m.unitPrice || 0) * m.quantity))).toFixed(2).replace('.', ',')}` },
+    { key: 'sale', header: 'Valor unit.', render: (m: any) => formatBRL(movementTotals(m).unitPrice) },
+    { key: 'cost', header: 'Valor custo', render: (m: any) => formatBRL(movementTotals(m).unitCost) },
+    { key: 'total', header: 'Total', render: (m: any) => formatBRL(movementTotals(m).totalAmount) },
     { key: 'actions', header: '', render: (m: any) => (
       <div className="flex items-center gap-2">
         <Button variant="danger" size="sm" icon={<Trash2 size={14} />} onClick={() => { removeMovement(m.id); toast.success('Movimentação removida'); }}>
@@ -129,7 +146,7 @@ export function CashierPage() {
               <p className="text-xs font-semibold text-white/40 uppercase">Vendas hoje</p>
               <DollarSign size={18} className="text-white/20" />
             </div>
-            <p className="text-2xl font-bold text-white">R$ {totals.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+            <p className="text-2xl font-bold text-white">{formatBRL(totals.total)}</p>
             <p className="text-xs text-white/30 mt-2">Total vendido hoje</p>
           </Card>
 
@@ -138,7 +155,7 @@ export function CashierPage() {
               <p className="text-xs font-semibold text-white/40 uppercase">Lucro hoje</p>
               <ShoppingBag size={18} className="text-white/20" />
             </div>
-            <p className="text-2xl font-bold text-emerald-400">R$ {totals.profit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+            <p className="text-2xl font-bold text-emerald-400">{formatBRL(totals.profit)}</p>
             <p className="text-xs text-white/30 mt-2">Lucro gerado hoje</p>
           </Card>
 
@@ -147,7 +164,7 @@ export function CashierPage() {
               <p className="text-xs font-semibold text-white/40 uppercase">Ticket médio</p>
               <ShoppingBag size={18} className="text-white/20" />
             </div>
-            <p className="text-2xl font-bold text-white">R$ {(totals.transactions > 0 ? (totals.total / totals.transactions) : 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+            <p className="text-2xl font-bold text-white">{formatBRL(totals.transactions > 0 ? (totals.total / totals.transactions) : 0)}</p>
             <p className="text-xs text-white/30 mt-2">Valor médio por venda</p>
           </Card>
         </div>

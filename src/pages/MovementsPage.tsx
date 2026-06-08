@@ -16,6 +16,12 @@ import toast from 'react-hot-toast';
 
 const ITEMS_PER_PAGE = 15;
 
+function safeNumber(value: any, fallback = 0): number {
+  if (value === null || value === undefined || value === '') return fallback;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
 const movementTypeConfig = {
   entry: { label: 'Entrada', variant: 'success' as const, icon: <ArrowUpRight size={14} />, color: 'rgba(16,185,129,0.15)', textColor: '#34d399' },
   exit: { label: 'Saída', variant: 'danger' as const, icon: <ArrowDownRight size={14} />, color: 'rgba(239,68,68,0.15)', textColor: '#f87171' },
@@ -187,8 +193,8 @@ export function MovementsPage() {
   // Summary stats
   const stats = useMemo(() => {
     const total = movements.length;
-    const entries = movements.filter(m => m.type === 'entry').reduce((acc, m) => acc + m.quantity, 0);
-    const exits = movements.filter(m => m.type === 'exit').reduce((acc, m) => acc + m.quantity, 0);
+    const entries = movements.filter(m => m.type === 'entry').reduce((acc, m) => acc + safeNumber(m.quantity, 0), 0);
+    const exits = movements.filter(m => m.type === 'exit').reduce((acc, m) => acc + safeNumber(m.quantity, 0), 0);
     const adjustments = movements.filter(m => m.type === 'adjustment').length;
     return { total, entries, exits, adjustments };
   }, [movements]);

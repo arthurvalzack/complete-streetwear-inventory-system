@@ -9,6 +9,26 @@ import { useStore } from '../store/useStore';
 import { Badge } from '../components/ui/Badge';
 import toast from 'react-hot-toast';
 
+function safeNumber(value: any, fallback = 0): number {
+  if (value === null || value === undefined || value === '') return fallback;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function movementTotals(m: any) {
+  const qty = safeNumber(m?.quantity, 0);
+  const unitPrice = safeNumber(m?.unitPrice ?? m?.unit_price ?? m?.variant?.salePrice ?? m?.product?.salePrice, 0);
+  const unitCost = safeNumber(m?.unitCost ?? m?.unit_cost ?? m?.costPrice ?? m?.cost_price ?? m?.variant?.costPrice ?? m?.variant?.cost ?? m?.product?.costPrice, 0);
+  const totalAmount = safeNumber(m?.totalAmount ?? m?.total_amount ?? m?.totalValue ?? m?.total_value, unitPrice * qty);
+  const totalCost = safeNumber(m?.totalCost ?? m?.total_cost, unitCost * qty);
+  const totalProfit = safeNumber(m?.totalProfit ?? m?.total_profit ?? m?.profit, totalAmount - totalCost);
+  return { qty, unitPrice, unitCost, totalAmount, totalCost, totalProfit };
+}
+
+function formatMoney(value: any): string {
+  return safeNumber(value, 0).toFixed(2).replace('.', ',');
+}
+
 export function ReportsPage() {
   const { products, movements } = useStore();
   const [loadingReport, setLoadingReport] = useState<string | null>(null);
@@ -36,8 +56,8 @@ export function ReportsPage() {
       p.category?.name || '',
       p.subcategory?.name || '',
       String(p.totalQuantity),
-      p.costPrice.toFixed(2).replace('.', ','),
-      p.salePrice.toFixed(2).replace('.', ','),
+      formatMoney(p.costPrice),
+      formatMoney(p.salePrice),
       p.status,
       p.tags.join(', '),
       format(new Date(p.createdAt), 'dd/MM/yyyy HH:mm'),
@@ -62,8 +82,8 @@ export function ReportsPage() {
           v.size,
           v.color,
           String(v.quantity),
-          v.costPrice.toFixed(2).replace('.', ','),
-          v.salePrice.toFixed(2).replace('.', ','),
+          formatMoney(v.costPrice),
+          formatMoney(v.salePrice),
         ]);
       });
     });
@@ -79,19 +99,22 @@ export function ReportsPage() {
     const typeMap: Record<string, string> = {
       entry: 'Entrada', exit: 'Saída', adjustment: 'Ajuste', transfer: 'Transferência', return: 'Devolução'
     };
-    const rows = movements.map(m => [
-      m.id,
-      m.product?.name || m.productId,
-      typeMap[m.type] || m.type,
-      String(m.quantity),
-      `R$ ${Number(m.unitPrice || 0).toFixed(2).replace('.', ',')}`,
-      `R$ ${Number(m.totalValue || (Number(m.unitPrice || 0) * m.quantity)).toFixed(2).replace('.', ',')}`,
-      String(m.previousQuantity),
-      String(m.newQuantity),
-      m.reason,
-      m.notes || '',
-      format(new Date(m.createdAt), 'dd/MM/yyyy HH:mm'),
-    ]);
+    const rows = movements.map(m => {
+      const values = movementTotals(m);
+      return [
+        m.id,
+        m.product?.name || m.productName || m.productId,
+        typeMap[m.type] || m.type,
+        String(values.qty),
+        `R$ ${formatMoney(values.unitPrice)}`,
+        `R$ ${formatMoney(values.totalAmount)}`,
+        String(safeNumber(m.previousQuantity, 0)),
+        String(safeNumber(m.newQuantity, 0)),
+        m.reason,
+        m.notes || '',
+        format(new Date(m.createdAt), 'dd/MM/yyyy HH:mm'),
+      ];
+    });
     generateCSV('movimentacoes', headers, rows);
     setLoadingReport(null);
     toast.success('Relatório de movimentações exportado!');
@@ -105,9 +128,9 @@ export function ReportsPage() {
     products.forEach(p => {
       const cat = p.category?.name || 'Outros';
       if (!catSummary[cat]) catSummary[cat] = { qty: 0, costVal: 0, saleVal: 0, count: 0 };
-      catSummary[cat].qty += p.totalQuantity;
-      catSummary[cat].costVal += p.costPrice * p.totalQuantity;
-      catSummary[cat].saleVal += p.salePrice * p.totalQuantity;
+      catSummary[cat].qty += safeNumber(p.totalQuantity, 0);
+      catSummary[cat].costVal += safeNumber(p.costPrice, 0) * safeNumber(p.totalQuantity, 0);
+      catSummary[cat].saleVal += safeNumber(p.salePrice, 0) * safeNumber(p.totalQuantity, 0);
       catSummary[cat].count++;
     });
     const headers = ['Categoria', 'Qtd Produtos', 'Estoque Total', 'Valor Custo', 'Valor Venda', 'Margem'];
@@ -115,9 +138,9 @@ export function ReportsPage() {
       cat,
       String(data.count),
       String(data.qty),
-      `R$ ${data.costVal.toFixed(2).replace('.', ',')}`,
-      `R$ ${data.saleVal.toFixed(2).replace('.', ',')}`,
-      `R$ ${(data.saleVal - data.costVal).toFixed(2).replace('.', ',')}`,
+      `R$ ${formatMoney(data.costVal)}`,
+      `R$ ${formatMoney(data.saleVal)}`,
+      `R$ ${formatMoney(data.saleVal - data.costVal)}`,
     ]);
     generateCSV('resumo_estoque', headers, rows);
     setLoadingReport(null);
@@ -160,9 +183,9 @@ export function ReportsPage() {
             p.name.substring(0, 30),
             p.brand?.name || '',
             p.category?.name || '',
-            p.totalQuantity,
-            `R$ ${p.costPrice.toFixed(2)}`,
-            `R$ ${p.salePrice.toFixed(2)}`,
+            safeNumber(p.totalQuantity, 0),
+            `R$ ${safeNumber(p.costPrice, 0).toFixed(2)}`,
+            `R$ ${safeNumber(p.salePrice, 0).toFixed(2)}`,
             p.status === 'active' ? 'Ativo' : p.status === 'inactive' ? 'Inativo' : 'Arquivado',
           ]),
           headStyles: { fillColor: [99, 102, 241], textColor: 255, fontStyle: 'bold', fontSize: 9 },
@@ -183,17 +206,20 @@ export function ReportsPage() {
         autoTable(doc, {
           startY: 44,
           head: [['Produto', 'Tipo', 'Quantidade', 'Preço Unit.', 'Valor Total', 'Anterior', 'Novo', 'Motivo', 'Data']],
-          body: movements.slice(0, 100).map(m => [
-            (m.product?.name || m.productId).substring(0, 25),
-            typeMap[m.type] || m.type,
-            m.quantity,
-            `R$ ${Number(m.unitPrice || 0).toFixed(2)}`,
-            `R$ ${Number(m.totalValue || (Number(m.unitPrice || 0) * m.quantity)).toFixed(2)}`,
-            m.previousQuantity,
-            m.newQuantity,
-            m.reason.substring(0, 30),
-            format(new Date(m.createdAt), 'dd/MM/yyyy HH:mm'),
-          ]),
+          body: movements.slice(0, 100).map(m => {
+            const values = movementTotals(m);
+            return [
+              (m.product?.name || m.productName || m.productId).substring(0, 25),
+              typeMap[m.type] || m.type,
+              values.qty,
+              `R$ ${safeNumber(values.unitPrice, 0).toFixed(2)}`,
+              `R$ ${safeNumber(values.totalAmount, 0).toFixed(2)}`,
+              safeNumber(m.previousQuantity, 0),
+              safeNumber(m.newQuantity, 0),
+              m.reason.substring(0, 30),
+              format(new Date(m.createdAt), 'dd/MM/yyyy HH:mm'),
+            ];
+          }),
           headStyles: { fillColor: [99, 102, 241], textColor: 255, fontStyle: 'bold', fontSize: 9 },
           bodyStyles: { fontSize: 8, textColor: [200, 200, 220] },
           alternateRowStyles: { fillColor: [20, 20, 35] },
@@ -222,9 +248,9 @@ export function ReportsPage() {
           'Marca': p.brand?.name || '',
           'Categoria': p.category?.name || '',
           'Subcategoria': p.subcategory?.name || '',
-          'Estoque Total': p.totalQuantity,
-          'Preço Custo': p.costPrice,
-          'Preço Venda': p.salePrice,
+          'Estoque Total': safeNumber(p.totalQuantity, 0),
+          'Preço Custo': safeNumber(p.costPrice, 0),
+          'Preço Venda': safeNumber(p.salePrice, 0),
           'Status': p.status,
           'Tags': p.tags.join(', '),
           'Criado em': format(new Date(p.createdAt), 'dd/MM/yyyy'),
@@ -241,9 +267,9 @@ export function ReportsPage() {
               'Produto': p.name,
               'Tamanho': v.size,
               'Cor': v.color,
-              'Quantidade': v.quantity,
-              'Preço Custo': v.costPrice,
-              'Preço Venda': v.salePrice,
+              'Quantidade': safeNumber(v.quantity, 0),
+              'Preço Custo': safeNumber(v.costPrice, 0),
+              'Preço Venda': safeNumber(v.salePrice, 0),
             });
           });
         });
@@ -255,19 +281,22 @@ export function ReportsPage() {
         const typeMap: Record<string, string> = {
           entry: 'Entrada', exit: 'Saída', adjustment: 'Ajuste', transfer: 'Transferência', return: 'Devolução'
         };
-        const data = movements.map(m => ({
-          'ID': m.id,
-          'Produto': m.product?.name || m.productId,
-          'Tipo': typeMap[m.type] || m.type,
-          'Quantidade': m.quantity,
-          'Preço Unit.': Number(m.unitPrice || 0).toFixed(2),
-          'Valor Total': Number(m.totalValue || (Number(m.unitPrice || 0) * m.quantity)).toFixed(2),
-          'Estoque Anterior': m.previousQuantity,
-          'Estoque Novo': m.newQuantity,
-          'Motivo': m.reason,
-          'Observações': m.notes || '',
-          'Data': format(new Date(m.createdAt), 'dd/MM/yyyy HH:mm'),
-        }));
+        const data = movements.map(m => {
+          const values = movementTotals(m);
+          return {
+            'ID': m.id,
+            'Produto': m.product?.name || m.productName || m.productId,
+            'Tipo': typeMap[m.type] || m.type,
+            'Quantidade': values.qty,
+            'Preço Unit.': safeNumber(values.unitPrice, 0).toFixed(2),
+            'Valor Total': safeNumber(values.totalAmount, 0).toFixed(2),
+            'Estoque Anterior': safeNumber(m.previousQuantity, 0),
+            'Estoque Novo': safeNumber(m.newQuantity, 0),
+            'Motivo': m.reason,
+            'Observações': m.notes || '',
+            'Data': format(new Date(m.createdAt), 'dd/MM/yyyy HH:mm'),
+          };
+        });
         const ws = XLSX.utils.json_to_sheet(data);
         XLSX.utils.book_append_sheet(wb, ws, 'Movimentações');
         XLSX.writeFile(wb, `movimentacoes_${format(new Date(), 'yyyy-MM-dd')}.xlsx`);
@@ -279,9 +308,9 @@ export function ReportsPage() {
     setLoadingReport(null);
   };
 
-  const totalStock = products.reduce((acc, p) => acc + p.totalQuantity, 0);
-  const totalCost = products.reduce((acc, p) => acc + p.costPrice * p.totalQuantity, 0);
-  const totalSale = products.reduce((acc, p) => acc + p.salePrice * p.totalQuantity, 0);
+  const totalStock = products.reduce((acc, p) => acc + safeNumber(p.totalQuantity, 0), 0);
+  const totalCost = products.reduce((acc, p) => acc + safeNumber(p.costPrice, 0) * safeNumber(p.totalQuantity, 0), 0);
+  const totalSale = products.reduce((acc, p) => acc + safeNumber(p.salePrice, 0) * safeNumber(p.totalQuantity, 0), 0);
 
   const reportCards = [
     {
@@ -308,8 +337,8 @@ export function ReportsPage() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {[
           { label: 'Produtos Cadastrados', value: products.length, icon: <Package size={18} />, color: '#818cf8' },
-          { label: 'Valor em Custo', value: `R$ ${totalCost.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, icon: <DollarSign size={18} />, color: '#fbbf24' },
-          { label: 'Valor em Venda', value: `R$ ${totalSale.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, icon: <TrendingUp size={18} />, color: '#34d399' },
+          { label: 'Valor em Custo', value: safeNumber(totalCost, 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }), icon: <DollarSign size={18} />, color: '#fbbf24' },
+          { label: 'Valor em Venda', value: safeNumber(totalSale, 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }), icon: <TrendingUp size={18} />, color: '#34d399' },
         ].map((s, i) => (
           <motion.div
             key={s.label}
@@ -478,3 +507,4 @@ export function ReportsPage() {
     </div>
   );
 }
+

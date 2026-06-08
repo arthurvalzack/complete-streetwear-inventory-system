@@ -100,6 +100,7 @@ create table if not exists movements (
   color text,
   quantity integer not null default 0,
   unit_price numeric not null default 0,
+  unit_cost numeric not null default 0,
   cost_price numeric not null default 0,
   total_amount numeric not null default 0,
   total_cost numeric not null default 0,
@@ -126,6 +127,7 @@ alter table movements add column if not exists size text;
 alter table movements add column if not exists color text;
 alter table movements add column if not exists quantity integer not null default 0;
 alter table movements add column if not exists unit_price numeric not null default 0;
+alter table movements add column if not exists unit_cost numeric not null default 0;
 alter table movements add column if not exists cost_price numeric not null default 0;
 alter table movements add column if not exists total_amount numeric not null default 0;
 alter table movements add column if not exists total_cost numeric not null default 0;
@@ -142,6 +144,26 @@ alter table movements add column if not exists date timestamptz not null default
 create unique index if not exists movements_id_uidx on movements (id);
 create index if not exists movements_product_id_idx on movements (product_id);
 create index if not exists movements_created_at_idx on movements (created_at desc);
+
+update movements
+set
+  quantity = coalesce(quantity, 0),
+  unit_price = coalesce(unit_price, 0),
+  unit_cost = coalesce(unit_cost, cost_price, 0),
+  total_amount = coalesce(total_amount, total_value, coalesce(unit_price, 0) * coalesce(quantity, 0), 0),
+  total_cost = coalesce(total_cost, coalesce(unit_cost, cost_price, 0) * coalesce(quantity, 0), 0),
+  total_profit = coalesce(total_profit, profit, coalesce(total_amount, total_value, 0) - coalesce(total_cost, 0), 0),
+  cost_price = coalesce(cost_price, unit_cost, 0),
+  updated_at = coalesce(updated_at, now())
+where
+  quantity is null
+  or unit_price is null
+  or unit_cost is null
+  or total_amount is null
+  or total_cost is null
+  or total_profit is null
+  or cost_price is null
+  or updated_at is null;
 
 create table if not exists alerts (
   id text primary key,

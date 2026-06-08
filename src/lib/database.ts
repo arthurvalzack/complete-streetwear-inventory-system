@@ -65,6 +65,52 @@ function generateSKU(brandSlug: string, categorySlug: string, index: number): st
   return `${brand}-${cat}-${num}`;
 }
 
+function safeNumber(value: any, fallback = 0): number {
+  if (value === null || value === undefined || value === '') return fallback;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function getMovementUnitCost(m: any, product?: Product | null): number {
+  const productFromMovement = m?.product || product;
+  const variantFromMovement = m?.variant || productFromMovement?.variants?.find((v: any) => v.id === (m?.variantId || m?.variant_id));
+  return safeNumber(
+    m?.unitCost ??
+    m?.unit_cost ??
+    m?.costPrice ??
+    m?.cost_price ??
+    variantFromMovement?.costPrice ??
+    variantFromMovement?.cost ??
+    productFromMovement?.costPrice ??
+    productFromMovement?.cost_price,
+    0
+  );
+}
+
+function getMovementUnitPrice(m: any, product?: Product | null): number {
+  const productFromMovement = m?.product || product;
+  const variantFromMovement = m?.variant || productFromMovement?.variants?.find((v: any) => v.id === (m?.variantId || m?.variant_id));
+  return safeNumber(
+    m?.unitPrice ??
+    m?.unit_price ??
+    variantFromMovement?.salePrice ??
+    variantFromMovement?.sale_price ??
+    productFromMovement?.salePrice ??
+    productFromMovement?.sale_price,
+    0
+  );
+}
+
+function getMovementTotals(m: any, product?: Product | null) {
+  const quantity = safeNumber(m?.quantity, 0);
+  const unitPrice = getMovementUnitPrice(m, product);
+  const unitCost = getMovementUnitCost(m, product);
+  const totalAmount = safeNumber(m?.totalAmount ?? m?.total_amount ?? m?.totalValue ?? m?.total_value, unitPrice * quantity);
+  const totalCost = safeNumber(m?.totalCost ?? m?.total_cost, unitCost * quantity);
+  const totalProfit = safeNumber(m?.totalProfit ?? m?.total_profit ?? m?.profit, totalAmount - totalCost);
+  return { quantity, unitPrice, unitCost, totalAmount, totalCost, totalProfit };
+}
+
 // Data retrieval
 export function getProducts(): Product[] {
   const raw = safeGetLocalStorage(PRODUCTS_KEY);
@@ -84,15 +130,15 @@ export function normalizeProduct(p: any): Product {
   // normalize price fields -> salePrice
   if (prod.salePrice === undefined && prod.price !== undefined) prod.salePrice = Number(prod.price);
   if (prod.salePrice === undefined && prod.sellingPrice !== undefined) prod.salePrice = Number(prod.sellingPrice);
-  prod.salePrice = prod.salePrice ? Number(prod.salePrice) : 0;
-  prod.costPrice = prod.costPrice ? Number(prod.costPrice) : 0;
+  prod.salePrice = safeNumber(prod.salePrice, 0);
+  prod.costPrice = safeNumber(prod.costPrice, 0);
   prod.images = Array.isArray(prod.images) ? prod.images.filter((image: any) => typeof image === 'string') : (prod.image ? [String(prod.image)] : []);
   prod.tags = Array.isArray(prod.tags) ? prod.tags : [];
   prod.variants = Array.isArray(prod.variants) ? prod.variants.map((v: any) => ({
     ...v,
-    quantity: Number(v.quantity) || 0,
-    costPrice: v.costPrice !== undefined ? Number(v.costPrice) : prod.costPrice,
-    salePrice: v.salePrice !== undefined ? Number(v.salePrice) : prod.salePrice,
+    quantity: safeNumber(v.quantity, 0),
+    costPrice: v.costPrice !== undefined ? safeNumber(v.costPrice, prod.costPrice) : prod.costPrice,
+    salePrice: v.salePrice !== undefined ? safeNumber(v.salePrice, prod.salePrice) : prod.salePrice,
   })) : [];
   prod.totalQuantity = prod.variants.reduce((acc: number, v: any) => acc + (Number(v.quantity) || 0), 0);
   // ensure id and slug exist
@@ -263,13 +309,13 @@ export function productToSupabase(p: Product): any {
     description: p.description || '',
     image: (p.images && p.images[0]) || null,
     images: p.images || [],
-    cost_price: p.costPrice ?? 0,
-    sale_price: p.salePrice ?? 0,
+    cost_price: safeNumber(p.costPrice, 0),
+    sale_price: safeNumber(p.salePrice, 0),
     status: p.status,
     variants: p.variants || [],
     tags: p.tags || [],
-    min_stock: (p as any).minStock ?? (p as any).min_stock ?? 0,
-    total_quantity: p.totalQuantity ?? 0,
+    min_stock: safeNumber((p as any).minStock ?? (p as any).min_stock, 0),
+    total_quantity: safeNumber(p.totalQuantity, 0),
     created_at: p.createdAt,
     updated_at: p.updatedAt,
   };
@@ -305,14 +351,14 @@ export function productFromSupabase(row: any): Product {
       color: v.color || '',
       colorHex: v.colorHex || v.color_hex || '',
       sku: v.sku || '',
-      quantity: Number(v.quantity || 0),
-      costPrice: Number(v.costPrice ?? v.cost_price ?? row.cost_price ?? 0),
-      salePrice: Number(v.salePrice ?? v.sale_price ?? row.sale_price ?? 0),
+      quantity: safeNumber(v.quantity, 0),
+      costPrice: safeNumber(v.costPrice ?? v.cost_price, safeNumber(row.cost_price, 0)),
+      salePrice: safeNumber(v.salePrice ?? v.sale_price, safeNumber(row.sale_price, 0)),
     })),
-    totalQuantity: Number(row.total_quantity ?? 0),
-    minStock: Number(row.min_stock ?? 0),
-    costPrice: Number(row.cost_price ?? 0),
-    salePrice: Number(row.sale_price ?? 0),
+    totalQuantity: safeNumber(row.total_quantity, 0),
+    minStock: safeNumber(row.min_stock, 0),
+    costPrice: safeNumber(row.cost_price, 0),
+    salePrice: safeNumber(row.sale_price, 0),
     createdAt: row.created_at || new Date().toISOString(),
     updatedAt: row.updated_at || new Date().toISOString(),
   };
@@ -320,23 +366,19 @@ export function productFromSupabase(row: any): Product {
 }
 
 export function movementToSupabase(m: any): any {
-  const quantity = Number(m.quantity || 0);
-  const unitPrice = Number(m.unitPrice ?? m.unit_price ?? 0);
-  const costPrice = Number(m.costPrice ?? m.cost_price ?? 0);
-  const totalAmount = Number(m.totalAmount ?? m.total_amount ?? m.totalValue ?? m.total_value ?? (unitPrice * quantity) ?? 0);
-  const totalCost = Number(m.totalCost ?? m.total_cost ?? (costPrice * quantity) ?? 0);
-  const totalProfit = Number(m.totalProfit ?? m.total_profit ?? m.profit ?? (totalAmount - totalCost) ?? 0);
+  const totals = getMovementTotals(m);
   return {
     id: m.id,
     type: m.type || 'exit',
     product_id: m.productId || m.product_id,
     product_name: m.productName || m.product_name,
     variant_id: m.variantId || m.variant_id || null,
-    quantity,
-    unit_price: unitPrice,
-    total_amount: totalAmount,
-    total_cost: totalCost,
-    total_profit: totalProfit,
+    quantity: totals.quantity,
+    unit_price: totals.unitPrice,
+    unit_cost: totals.unitCost,
+    total_amount: totals.totalAmount,
+    total_cost: totals.totalCost,
+    total_profit: totals.totalProfit,
     reason: m.reason || null,
     notes: m.notes || null,
     user_id: m.userId || m.user_id || null,
@@ -353,6 +395,8 @@ export function movementFromSupabase(row: any): StockMovement {
       return row.product_snapshot;
     } catch (e) { return undefined; }
   })();
+  const localProduct = row.product_id ? getProductById(row.product_id) : null;
+  const totals = getMovementTotals(row, localProduct);
   const mv: any = {
     id: row.id,
     type: row.type || 'exit',
@@ -364,14 +408,15 @@ export function movementFromSupabase(row: any): StockMovement {
     variantId: row.variant_id,
     size: row.size,
     color: row.color,
-    quantity: Number(row.quantity || 0),
-    unitPrice: Number(row.unit_price || 0),
-    costPrice: Number(row.cost_price || 0),
-    totalValue: Number(row.total_amount ?? row.total_value ?? 0),
-    totalAmount: Number(row.total_amount ?? row.total_value ?? 0),
-    totalCost: Number(row.total_cost ?? 0),
-    totalProfit: Number(row.total_profit ?? row.profit ?? 0),
-    profit: Number(row.total_profit ?? row.profit ?? 0),
+    quantity: totals.quantity,
+    unitPrice: totals.unitPrice,
+    costPrice: totals.unitCost,
+    unitCost: totals.unitCost,
+    totalValue: totals.totalAmount,
+    totalAmount: totals.totalAmount,
+    totalCost: totals.totalCost,
+    totalProfit: totals.totalProfit,
+    profit: totals.totalProfit,
     product_snapshot: prodSnapshot,
     reason: row.reason,
     notes: row.notes,
@@ -646,18 +691,18 @@ export function createMovement(data: Omit<StockMovement, 'id' | 'createdAt' | 'p
     let previousQuantity = 0;
     let newQuantity = 0;
     // determine pricing info
-    let unitPrice = Number(product.salePrice) || 0;
-    let costPrice = Number(product.costPrice) || 0;
+    let unitPrice = safeNumber(product.salePrice, 0);
+    let unitCost = safeNumber(product.costPrice, 0);
   if (data.variantId) {
     const variant = product.variants.find(v => v.id === data.variantId);
     if (variant) {
-      unitPrice = variant.salePrice ?? unitPrice;
-      costPrice = variant.costPrice ?? costPrice;
+      unitPrice = safeNumber(variant.salePrice, unitPrice);
+      unitCost = safeNumber((variant as any).costPrice ?? (variant as any).cost, unitCost);
     }
   }
 
   // validations
-    const qty = Number(data.quantity);
+    const qty = safeNumber(data.quantity, 0);
     if (!Number.isFinite(qty) || qty <= 0) {
       console.error('createMovement failed: invalid quantity', { productId: data.productId, variantId: data.variantId, quantity: data.quantity });
       return null;
@@ -672,8 +717,8 @@ export function createMovement(data: Omit<StockMovement, 'id' | 'createdAt' | 'p
       const variant = product.variants[variantIndex];
       previousQuantity = Number(variant.quantity) || 0;
       // pricing from variant if present
-      unitPrice = Number(variant.salePrice) || unitPrice;
-      costPrice = Number(variant.costPrice) || costPrice;
+      unitPrice = safeNumber(variant.salePrice, unitPrice);
+      unitCost = safeNumber((variant as any).costPrice ?? (variant as any).cost, unitCost);
 
       if (data.type === 'entry' || data.type === 'return') {
         newQuantity = previousQuantity + qty;
@@ -720,10 +765,14 @@ export function createMovement(data: Omit<StockMovement, 'id' | 'createdAt' | 'p
       }
   }
 
-    product.totalQuantity = product.variants.reduce((acc, v) => acc + (Number(v.quantity) || 0), 0);
+    product.totalQuantity = product.variants.reduce((acc, v) => acc + safeNumber(v.quantity, 0), 0);
   product.updatedAt = new Date().toISOString();
   products[productIndex] = product;
   saveProducts(products);
+
+    const totalAmount = safeNumber(unitPrice * qty, 0);
+    const totalCost = safeNumber(unitCost * qty, 0);
+    const totalProfit = safeNumber(totalAmount - totalCost, 0);
 
     const movement: StockMovement = {
       ...data,
@@ -732,8 +781,13 @@ export function createMovement(data: Omit<StockMovement, 'id' | 'createdAt' | 'p
       newQuantity,
       createdAt: new Date().toISOString(),
       unitPrice,
-      costPrice,
-      totalValue: Number((unitPrice * qty).toFixed(2)),
+      costPrice: unitCost,
+      unitCost,
+      totalValue: totalAmount,
+      totalAmount,
+      totalCost,
+      totalProfit,
+      profit: totalProfit,
       productName: product.name,
       product: product,
       variant: data.variantId ? product.variants.find(v => v.id === data.variantId) : undefined,

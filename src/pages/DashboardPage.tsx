@@ -16,6 +16,26 @@ import { Badge } from '../components/ui/Badge';
 
 const CHART_COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#10b981', '#f59e0b', '#3b82f6'];
 
+function safeNumber(value: any, fallback = 0): number {
+  if (value === null || value === undefined || value === '') return fallback;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function movementTotals(m: any) {
+  const qty = safeNumber(m?.quantity, 0);
+  const unitPrice = safeNumber(m?.unitPrice ?? m?.unit_price ?? m?.variant?.salePrice ?? m?.product?.salePrice, 0);
+  const unitCost = safeNumber(m?.unitCost ?? m?.unit_cost ?? m?.costPrice ?? m?.cost_price ?? m?.variant?.costPrice ?? m?.variant?.cost ?? m?.product?.costPrice, 0);
+  const totalAmount = safeNumber(m?.totalAmount ?? m?.total_amount ?? m?.totalValue ?? m?.total_value, unitPrice * qty);
+  const totalCost = safeNumber(m?.totalCost ?? m?.total_cost, unitCost * qty);
+  const totalProfit = safeNumber(m?.totalProfit ?? m?.total_profit ?? m?.profit, totalAmount - totalCost);
+  return { qty, totalAmount, totalCost, totalProfit };
+}
+
+function formatBRL(value: any): string {
+  return safeNumber(value, 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
 const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: Array<{ color: string; name: string; value: number }>; label?: string }) => {
   if (active && payload && payload.length) {
     return (
@@ -55,11 +75,11 @@ export function DashboardPage() {
 
   const stats = useMemo(() => {
     const totalProducts = products.length;
-    const totalStock = products.reduce((acc, p) => acc + p.totalQuantity, 0);
-    const lowStockProducts = products.filter(p => p.totalQuantity > 0 && p.totalQuantity <= 5).length;
-    const outOfStockProducts = products.filter(p => p.totalQuantity === 0).length;
-    const totalCostValue = products.reduce((acc, p) => acc + p.costPrice * p.totalQuantity, 0);
-    const totalSaleValue = products.reduce((acc, p) => acc + p.salePrice * p.totalQuantity, 0);
+    const totalStock = products.reduce((acc, p) => acc + safeNumber(p.totalQuantity, 0), 0);
+    const lowStockProducts = products.filter(p => safeNumber(p.totalQuantity, 0) > 0 && safeNumber(p.totalQuantity, 0) <= 5).length;
+    const outOfStockProducts = products.filter(p => safeNumber(p.totalQuantity, 0) === 0).length;
+    const totalCostValue = products.reduce((acc, p) => acc + safeNumber(p.costPrice, 0) * safeNumber(p.totalQuantity, 0), 0);
+    const totalSaleValue = products.reduce((acc, p) => acc + safeNumber(p.salePrice, 0) * safeNumber(p.totalQuantity, 0), 0);
     const activeProducts = products.filter(p => p.status === 'active').length;
     return { totalProducts, totalStock, lowStockProducts, outOfStockProducts, totalCostValue, totalSaleValue, activeProducts };
   }, [products]);
@@ -84,14 +104,11 @@ export function DashboardPage() {
       let transactions = 0;
       let itemsCount = 0;
       dayMovs.forEach((m: any) => {
-        const qty = Number(m.quantity) || 0;
-        const salePrice = Number(m.unitPrice ?? m.variant?.salePrice ?? m.product?.salePrice ?? 0) || 0;
-        const costPrice = Number(m.costPrice ?? m.variant?.costPrice ?? m.product?.costPrice ?? 0) || 0;
-        const movementTotal = Number(m.totalValue ?? (salePrice * qty)) || 0;
-        total += movementTotal;
-        profit += (movementTotal - (costPrice * qty));
+        const values = movementTotals(m);
+        total += values.totalAmount;
+        profit += values.totalProfit;
         transactions += 1;
-        itemsCount += qty;
+        itemsCount += values.qty;
       });
       return { total, profit, transactions, itemsCount };
     };
@@ -103,7 +120,7 @@ export function DashboardPage() {
       ? ((todayVals.total - yesterdayVals.total) / yesterdayVals.total) * 100
       : null;
 
-    const ticket = todayVals.transactions > 0 ? todayVals.total / todayVals.transactions : 0;
+    const ticket = todayVals.transactions > 0 ? safeNumber(todayVals.total / todayVals.transactions, 0) : 0;
 
     return {
       salesTotal: todayVals.total,
@@ -199,7 +216,7 @@ export function DashboardPage() {
         />
         <StatCard
           title="Vendas do Dia"
-          value={financial.salesTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+          value={formatBRL(financial.salesTotal)}
           subtitle={
             financial.salesTransactions > 0
               ? `Total vendido hoje${!financial.hasHistory ? ' · Sem histórico para comparação' : ''}`
@@ -212,7 +229,7 @@ export function DashboardPage() {
         />
         <StatCard
           title="Lucro do Dia"
-          value={financial.profitTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+          value={formatBRL(financial.profitTotal)}
           subtitle="Lucro gerado hoje"
           icon={<TrendingUp size={20} />}
           color="emerald"
@@ -220,7 +237,7 @@ export function DashboardPage() {
         />
         <StatCard
           title="Ticket Médio"
-          value={financial.ticketAverage.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+          value={formatBRL(financial.ticketAverage)}
           subtitle="Valor médio por venda"
           icon={<ShoppingBag size={20} />}
           color="blue"
@@ -241,7 +258,7 @@ export function DashboardPage() {
             <DollarSign size={16} className="text-white/20" />
           </div>
           <p className="text-2xl font-bold text-white">
-            R$ {stats.totalCostValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            {formatBRL(stats.totalCostValue)}
           </p>
           <div className="flex items-center gap-1.5 mt-2">
             <ArrowUpRight size={14} className="text-emerald-400" />
@@ -261,7 +278,7 @@ export function DashboardPage() {
             <TrendingUp size={16} className="text-indigo-400" />
           </div>
           <p className="text-2xl font-bold gradient-text">
-            R$ {stats.totalSaleValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            {formatBRL(stats.totalSaleValue)}
           </p>
           <div className="flex items-center gap-1.5 mt-2">
             <ArrowUpRight size={14} className="text-indigo-400" />
@@ -280,13 +297,13 @@ export function DashboardPage() {
             <Activity size={16} className="text-white/20" />
           </div>
           <p className="text-2xl font-bold text-emerald-400">
-            R$ {(stats.totalSaleValue - stats.totalCostValue).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            {formatBRL(stats.totalSaleValue - stats.totalCostValue)}
           </p>
           <div className="flex items-center gap-1.5 mt-2">
             <ArrowUpRight size={14} className="text-emerald-400" />
             <span className="text-xs text-white/30 font-medium">
               {stats.totalCostValue > 0
-                ? `${(((stats.totalSaleValue - stats.totalCostValue) / stats.totalCostValue) * 100).toFixed(1)}% de margem`
+                ? `${safeNumber(((stats.totalSaleValue - stats.totalCostValue) / stats.totalCostValue) * 100, 0).toFixed(1)}% de margem`
                 : '—'}
             </span>
           </div>
