@@ -9,6 +9,12 @@ import { Card } from '../components/ui/Card';
 import { Modal } from '../components/ui/Modal';
 import { createCatalogoShareLink, getCatalogoConfig, getCatalogoItems, toggleCatalogoProduct, removeProductFromCatalog, updateCatalogoConfig } from '../services/catalogoService';
 
+function safeNumber(value: any, fallback = 0): number {
+  if (value === null || value === undefined || value === '') return fallback;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
 function getCatalogShareBaseUrl() {
   try {
     return localStorage.getItem('catalogShareBaseUrl') || window.location.origin;
@@ -284,7 +290,7 @@ export function AdminCatalogPage() {
                 </div>
                 <div className="mt-4 flex items-center justify-between gap-3">
                   <div>
-                    <p className="text-sm font-semibold text-white">R$ {product.salePrice.toFixed(2).replace('.', ',')}</p>
+                    <p className="text-sm font-semibold text-white">R$ {safeNumber(product.salePrice, 0).toFixed(2).replace('.', ',')}</p>
                     <p className="text-xs text-white/40">{product.totalQuantity} un.</p>
                   </div>
                   <Button

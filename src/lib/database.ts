@@ -365,12 +365,14 @@ export function productFromSupabase(row: any): Product {
 
 export function movementToSupabase(m: any): any {
   const totals = getMovementTotals(m);
+  const variantName = m.variantName || m.variant_name || (m.variant ? [m.variant.size, m.variant.color].filter(Boolean).join(' ') : null);
   return {
     id: m.id,
     type: m.type || 'exit',
     product_id: m.productId || m.product_id,
     product_name: m.productName || m.product_name,
     variant_id: m.variantId || m.variant_id || null,
+    variant_name: variantName || null,
     quantity: totals.quantity,
     unit_price: totals.unitPrice,
     unit_cost: totals.unitCost,
@@ -399,11 +401,12 @@ export function movementFromSupabase(row: any): StockMovement {
     id: row.id,
     type: row.type || 'exit',
     productId: row.product_id,
-    productName: row.product_name || prodSnapshot?.name || row.product_id || 'Produto',
+    productName: row.product_name || prodSnapshot?.name || localProduct?.name || 'Produto nao encontrado',
     brand: row.brand_name,
     category: row.category_name,
     subcategory: row.subcategory_name,
     variantId: row.variant_id,
+    variantName: row.variant_name,
     size: row.size,
     color: row.color,
     quantity: totals.quantity,
@@ -1059,22 +1062,19 @@ export async function loadRemoteToLocal(): Promise<void> {
       remoteCatalogConfig = data;
     } catch (error) { console.error('[SUPABASE LOAD ERROR]', error); remoteCatalogConfig = null; }
 
-    const hasRemoteProducts = Array.isArray(remoteProducts) && remoteProducts.length > 0;
-    const hasRemoteMovements = Array.isArray(remoteMovements) && remoteMovements.length > 0;
-
     suppressRemoteSync = true;
-    if (hasRemoteProducts) {
+    if (Array.isArray(remoteProducts)) {
       try { saveProducts((remoteProducts || []).map(productFromSupabase)); } catch (error) {
         console.error('[SUPABASE LOAD ERROR]', error);
         saveProducts(remoteProducts as Product[]);
       }
     }
-    if (hasRemoteMovements) {
+    if (Array.isArray(remoteMovements)) {
       saveMovements((remoteMovements || []).map(movementFromSupabase));
     }
-    if (remoteBrands && remoteBrands.length > 0) saveBrands(remoteBrands as Brand[]);
-    if (remoteCategories && remoteCategories.length > 0) saveCategories(remoteCategories as Category[]);
-    if (remoteAlerts) {
+    if (Array.isArray(remoteBrands)) saveBrands(remoteBrands as Brand[]);
+    if (Array.isArray(remoteCategories)) saveCategories(remoteCategories as Category[]);
+    if (Array.isArray(remoteAlerts)) {
       saveAlerts((remoteAlerts || []).map((alert: any) => ({
         id: alert.id,
         type: alert.type,

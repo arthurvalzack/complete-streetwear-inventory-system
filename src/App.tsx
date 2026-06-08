@@ -24,6 +24,15 @@ import { TopBar } from './components/layout/TopBar';
 
 type Page = 'dashboard' | 'products' | 'movements' | 'alerts' | 'reports' | 'brands' | 'notifications' | 'admin_catalog' | 'cashier' | 'settings';
 
+function safeGetLocalStorage(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch (error) {
+    console.error('[LOCAL STORAGE READ ERROR]', error);
+    return null;
+  }
+}
+
 const pageConfig: Record<Page, { title: string; subtitle?: string }> = {
   dashboard: { title: 'Dashboard', subtitle: 'Visão geral do estoque' },
   products: { title: 'Produtos', subtitle: 'Gerencie seu catálogo completo' },
@@ -141,12 +150,7 @@ function App() {
         // Ensure base taxonomy exists even if seed is disabled in production
         await ensureBaseTaxonomy();
         // If after loading remote there is still no local data, seed demo data only in dev.
-        let initialized = false;
-        try {
-          initialized = !!localStorage.getItem('stck_db_initialized');
-        } catch (error) {
-          console.error('[LOCAL STORAGE READ ERROR]', error);
-        }
+        const initialized = !!safeGetLocalStorage('stck_db_initialized');
         const hasLocal = getProducts().length > 0 || initialized;
         if (!hasLocal && import.meta.env.DEV) seedDatabase();
       } else {

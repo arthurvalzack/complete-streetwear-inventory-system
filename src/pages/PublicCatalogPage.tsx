@@ -7,6 +7,12 @@ import { Product, StoreConfig } from '../types';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 
+function safeNumber(value: any, fallback = 0): number {
+  if (value === null || value === undefined || value === '') return fallback;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
 export function PublicCatalogPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [config, setConfig] = useState<Record<string, any>>({
@@ -130,7 +136,7 @@ export function PublicCatalogPage() {
                     <p className="text-sm text-white/50 leading-6 line-clamp-3">{product.description}</p>
                     <div className="flex flex-col gap-3 pt-3">
                       <div className="flex items-center justify-between gap-3 text-sm">
-                        <span className="font-semibold text-white">R$ {product.salePrice.toFixed(2).replace('.', ',')}</span>
+                        <span className="font-semibold text-white">R$ {safeNumber(product.salePrice, 0).toFixed(2).replace('.', ',')}</span>
                         <span className="text-white/40">{product.totalQuantity} un.</span>
                       </div>
                       <Button

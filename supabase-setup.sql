@@ -96,6 +96,7 @@ create table if not exists movements (
   category_name text,
   subcategory_name text,
   variant_id text,
+  variant_name text,
   size text,
   color text,
   quantity integer not null default 0,
@@ -123,6 +124,7 @@ alter table movements add column if not exists brand_name text;
 alter table movements add column if not exists category_name text;
 alter table movements add column if not exists subcategory_name text;
 alter table movements add column if not exists variant_id text;
+alter table movements add column if not exists variant_name text;
 alter table movements add column if not exists size text;
 alter table movements add column if not exists color text;
 alter table movements add column if not exists quantity integer not null default 0;
@@ -164,6 +166,12 @@ where
   or total_profit is null
   or cost_price is null
   or updated_at is null;
+
+update movements
+set product_name = products.name
+from products
+where movements.product_id = products.id
+  and (movements.product_name is null or movements.product_name = '');
 
 create table if not exists alerts (
   id text primary key,

@@ -121,7 +121,7 @@ export function MovementsPage() {
       header: 'Produto',
       render: (m: StockMovement) => (
         <div>
-          <p className="text-sm text-white/80 font-medium">{m.product?.name || m.productId}</p>
+          <p className="text-sm text-white/80 font-medium">{m.product?.name || m.productName || 'Produto nao encontrado'}</p>
           {m.variant && (
             <p className="text-xs text-white/30">{m.variant.size} · {m.variant.color}</p>
           )}

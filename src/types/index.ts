@@ -77,6 +77,7 @@ export interface StockMovement {
   productId: string;
   product?: Product;
   variantId?: string;
+  variantName?: string;
   variant?: ProductVariant;
   type: MovementType;
   quantity: number;
