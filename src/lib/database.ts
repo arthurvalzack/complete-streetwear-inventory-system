@@ -280,10 +280,97 @@ export function deleteProduct(id: string): boolean {
   return true;
 }
 
-export function deleteMovement(id: string): boolean {
+function shouldRestoreStockForMovement(movement: StockMovement): boolean {
+  const type = String(movement.type || '').toLowerCase();
+  const reason = String(movement.reason || '').toLowerCase();
+  return ['exit', 'out', 'sale'].includes(type) || reason.includes('venda');
+}
+
+function shouldReverseEntryForMovement(movement: StockMovement): boolean {
+  const type = String(movement.type || '').toLowerCase();
+  return ['entry', 'return'].includes(type);
+}
+
+function applyMovementRemovalToProduct(product: Product, movement: StockMovement): Product {
+  const updated = normalizeProduct(product);
+  const quantity = safeNumber(movement.quantity, 0);
+  const restoreExit = shouldRestoreStockForMovement(movement);
+  const reverseEntry = shouldReverseEntryForMovement(movement);
+  const isAdjustment = String(movement.type || '').toLowerCase() === 'adjustment';
+
+  if (!restoreExit && !reverseEntry && !isAdjustment) return updated;
+
+  const applyQuantity = (current: number) => {
+    if (isAdjustment) return safeNumber(movement.previousQuantity, current);
+    if (restoreExit) return current + quantity;
+    return Math.max(0, current - quantity);
+  };
+
+  if (movement.variantId) {
+    const variantIndex = updated.variants.findIndex(v => v.id === movement.variantId);
+    if (variantIndex !== -1) {
+      const currentQuantity = safeNumber(updated.variants[variantIndex].quantity, 0);
+      updated.variants[variantIndex] = {
+        ...updated.variants[variantIndex],
+        quantity: applyQuantity(currentQuantity),
+      };
+    }
+  } else if (updated.variants.length > 0) {
+    if (isAdjustment) {
+      updated.variants[0] = { ...updated.variants[0], quantity: safeNumber(movement.previousQuantity, 0) };
+      updated.variants = updated.variants.map((v, index) => index === 0 ? v : { ...v, quantity: 0 });
+    } else {
+      const currentQuantity = safeNumber(updated.variants[0].quantity, 0);
+      updated.variants[0] = {
+        ...updated.variants[0],
+        quantity: applyQuantity(currentQuantity),
+      };
+    }
+  } else {
+    updated.totalQuantity = applyQuantity(safeNumber(updated.totalQuantity, 0));
+  }
+
+  if (updated.variants.length > 0) {
+    updated.totalQuantity = updated.variants.reduce((acc, variant) => acc + safeNumber(variant.quantity, 0), 0);
+  }
+  updated.updatedAt = new Date().toISOString();
+  return updated;
+}
+
+export async function deleteMovement(id: string): Promise<boolean> {
   const movements = getMovements();
+  const movement = movements.find(m => m.id === id);
+  if (!movement) return false;
+
+  const products = getProducts();
+  const productIndex = products.findIndex(p => p.id === movement.productId);
+  const updatedProduct = productIndex !== -1 ? applyMovementRemovalToProduct(products[productIndex], movement) : null;
+
+  if (isSupabaseConfigured && supabase) {
+    try {
+      await deleteMovementInSupabase(id);
+    } catch (error) {
+      console.error('[SUPABASE MOVEMENT DELETE ERROR]', error);
+      throw error;
+    }
+
+    if (updatedProduct) {
+      try {
+        await updateProductInventoryInSupabase(updatedProduct);
+      } catch (error) {
+        console.error('[SUPABASE SALE STOCK UPDATE ERROR]', error);
+        throw error;
+      }
+    }
+  }
+
+  if (updatedProduct && productIndex !== -1) {
+    products[productIndex] = updatedProduct;
+    saveProducts(products);
+    checkStockAlerts(updatedProduct);
+  }
+
   const filtered = movements.filter(m => m.id !== id);
-  if (filtered.length === movements.length) return false;
   saveMovements(filtered);
   return true;
 }

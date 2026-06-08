@@ -123,7 +123,15 @@ export function CashierPage() {
     { key: 'total', header: 'Total', render: (m: any) => formatBRL(movementTotals(m).totalAmount) },
     { key: 'actions', header: '', render: (m: any) => (
       <div className="flex items-center gap-2">
-        <Button variant="danger" size="sm" icon={<Trash2 size={14} />} onClick={() => { removeMovement(m.id); toast.success('Movimentação removida'); }}>
+        <Button variant="danger" size="sm" icon={<Trash2 size={14} />} onClick={async () => {
+          try {
+            const removed = await removeMovement(m.id);
+            if (removed) toast.success('Movimentação removida');
+          } catch (error) {
+            console.error('[SUPABASE MOVEMENT DELETE ERROR]', error);
+            toast.error('Não foi possível remover a movimentação no banco de dados.');
+          }
+        }}>
           Remover
         </Button>
       </div>

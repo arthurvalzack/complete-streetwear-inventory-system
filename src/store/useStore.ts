@@ -43,7 +43,7 @@ interface AppState {
   editProduct: (id: string, data: Partial<Product>) => void;
   removeProduct: (id: string) => void;
   addMovement: (data: Omit<StockMovement, 'id' | 'createdAt' | 'previousQuantity' | 'newQuantity'>) => StockMovement | null;
-  removeMovement: (id: string) => void;
+  removeMovement: (id: string) => Promise<boolean>;
   readAlert: (id: string) => void;
   readAllAlerts: () => void;
   updateStoreConfig: (data: Partial<StoreConfig>) => void;
@@ -197,11 +197,18 @@ export const useStore = create<AppState>()(
       return movement;
     },
 
-    removeMovement: (id) => {
-      deleteMovement(id);
-      set(state => {
-        state.movements = state.movements.filter(m => m.id !== id);
-      });
+    removeMovement: async (id) => {
+      const removed = await deleteMovement(id);
+      if (removed) {
+        const products = getProducts();
+        const movements = getMovements();
+        set(state => {
+          state.movements = movements;
+          state.products = products;
+          state.alerts = getAlerts();
+        });
+      }
+      return removed;
     },
 
     readAlert: (id) => {

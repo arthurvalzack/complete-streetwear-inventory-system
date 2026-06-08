@@ -175,10 +175,15 @@ export function MovementsPage() {
       header: '',
       render: (m: StockMovement) => (
         <button
-          onClick={() => {
+          onClick={async () => {
             if (confirm('Tem certeza que deseja excluir esta movimentação?')) {
-              useStore.getState().removeMovement(m.id);
-              toast.success('Movimentação excluída com sucesso!');
+              try {
+                const removed = await useStore.getState().removeMovement(m.id);
+                if (removed) toast.success('Movimentação excluída com sucesso!');
+              } catch (error) {
+                console.error('[SUPABASE MOVEMENT DELETE ERROR]', error);
+                toast.error('Não foi possível excluir a movimentação no banco de dados.');
+              }
             }
           }}
           className="p-2 hover:bg-red-500/20 rounded-lg text-red-400 hover:text-red-300 transition-colors"
@@ -394,3 +399,4 @@ export function MovementsPage() {
     </div>
   );
 }
+
