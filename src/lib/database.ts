@@ -180,9 +180,7 @@ export function getAlerts(): Alert[] {
 function saveProducts(products: Product[]): void {
   const serialized = JSON.stringify(products);
   memoryCache[PRODUCTS_KEY] = serialized;
-  if (!safeSetLocalStorageOnly(PRODUCTS_KEY, serialized)) {
-    safeSetLocalStorageOnly(PRODUCTS_KEY, JSON.stringify(stripLargeBase64Images(products)));
-  }
+  safeSetLocalStorageOnly(PRODUCTS_KEY, JSON.stringify(stripLargeBase64Images(products)));
 }
 
 function saveMovements(movements: StockMovement[]): void {
@@ -606,11 +604,17 @@ async function deleteMovementInSupabase(movementId: string) {
   return true;
 }
 
-async function updateProductStockInSupabase(productId: string, updatedProduct: Product) {
+async function updateProductInventoryInSupabase(updatedProduct: Product): Promise<void> {
   if (!isSupabaseConfigured || !supabase) throw new Error('Supabase not configured');
-  const { data, error } = await supabase.from('products').upsert([productToSupabase(updatedProduct)]).select().single();
+  const { error } = await supabase
+    .from('products')
+    .update({
+      variants: updatedProduct.variants || [],
+      total_quantity: safeNumber(updatedProduct.totalQuantity, 0),
+      updated_at: updatedProduct.updatedAt || new Date().toISOString(),
+    })
+    .eq('id', updatedProduct.id);
   if (error) throw error;
-  return data;
 }
 
 // registerSale: cashier sale entrypoint. Local state is updated first; configured Supabase must persist the sale before success.
@@ -654,7 +658,7 @@ export async function registerSale(params: {
     const updatedProduct = getProductById(productId);
     if (!updatedProduct) {
       const error = new Error('Updated product not found locally after sale');
-      console.error('[SUPABASE SALE PRODUCT UPDATE ERROR]', { productId, error });
+      console.error('[SUPABASE SALE STOCK UPDATE ERROR]', { productId, error });
       throw error;
     }
 
@@ -666,9 +670,9 @@ export async function registerSale(params: {
     }
 
     try {
-      await upsertProductToSupabase(updatedProduct);
+      await updateProductInventoryInSupabase(updatedProduct);
     } catch (error) {
-      console.error('[SUPABASE SALE PRODUCT UPDATE ERROR]', error);
+      console.error('[SUPABASE SALE STOCK UPDATE ERROR]', error);
       throw error;
     }
   }
@@ -798,10 +802,10 @@ export function createMovement(data: Omit<StockMovement, 'id' | 'createdAt' | 'p
     saveMovements(movements);
     checkStockAlerts(product);
     if (isSupabaseConfigured && !suppressRemoteSync) {
-      upsertProductToSupabase(product)
-        .catch((error) => console.error('[SUPABASE SALE PRODUCT UPDATE ERROR]', error));
       upsertMovementToSupabase(movement)
         .catch((error) => console.error('[SUPABASE SALE MOVEMENT INSERT ERROR]', error));
+      updateProductInventoryInSupabase(product)
+        .catch((error) => console.error('[SUPABASE SALE STOCK UPDATE ERROR]', error));
     }
     return movement;
   } catch (err) {
