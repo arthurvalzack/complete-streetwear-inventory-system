@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Plus, Filter, X, Package, Edit2, Trash2,
-  AlertTriangle, Tag, Eye
+  AlertTriangle, Tag, Eye, Search, ImageIcon
 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { useStore } from '../store/useStore';
@@ -11,7 +11,7 @@ import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { Input, Select, Textarea } from '../components/ui/Input';
-import { Table, Pagination } from '../components/ui/Table';
+import { Pagination } from '../components/ui/Table';
 import { Product, ProductStatus, ProductVariant } from '../types';
 import toast from 'react-hot-toast';
 
@@ -48,7 +48,7 @@ const defaultForm = {
 };
 
 export function ProductsPage() {
-  const { products, brands, categories, addProduct, editProduct, removeProduct, currentPage, setCurrentPage, searchQuery } = useStore();
+  const { products, brands, categories, addProduct, editProduct, removeProduct, currentPage, setCurrentPage, searchQuery, setSearchQuery } = useStore();
 
   const [showModal, setShowModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -103,6 +103,9 @@ export function ProductsPage() {
   }, [categories, form.categoryId]);
 
   const noCategories = categories.length === 0;
+  const lowStockCount = products.filter(p => p.totalQuantity > 0 && p.totalQuantity <= 5).length;
+  const activeProductsCount = products.filter(p => p.status === 'active').length;
+  const inactiveProductsCount = products.length - activeProductsCount;
 
   const handleImageUpload = (file: File) => {
     const reader = new FileReader();
@@ -335,31 +338,71 @@ export function ProductsPage() {
       ),
     },
   ];
+  void columns;
 
   return (
-    <div className="flex-1 overflow-y-auto p-6 space-y-5">
+    <div className="flex-1 overflow-y-auto p-6 space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-sm text-white/40">
-            {filteredProducts.length} produto{filteredProducts.length !== 1 ? 's' : ''} encontrado{filteredProducts.length !== 1 ? 's' : ''}
-          </h2>
+      <div className="space-y-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.32em] text-violet-300/60">Premium Inventory</p>
+            <h2 className="mt-2 text-3xl font-semibold tracking-tight text-white">Catálogo de Produtos</h2>
+            <p className="mt-1 text-sm text-white/40">Curadoria, estoque e performance comercial em uma visão editorial.</p>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 lg:min-w-[520px]">
+            <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4 shadow-2xl shadow-black/20 backdrop-blur-xl">
+              <p className="text-xs uppercase tracking-[0.22em] text-white/35">Total de Produtos</p>
+              <p className="mt-2 text-2xl font-semibold text-white">{products.length}</p>
+            </div>
+            <div className="rounded-2xl border border-amber-400/15 bg-amber-400/[0.045] p-4 shadow-2xl shadow-black/20 backdrop-blur-xl">
+              <p className="text-xs uppercase tracking-[0.22em] text-amber-200/45">Alertas de Estoque</p>
+              <p className="mt-2 text-2xl font-semibold text-amber-200">{lowStockCount}</p>
+            </div>
+            <div className="rounded-2xl border border-emerald-400/15 bg-emerald-400/[0.04] p-4 shadow-2xl shadow-black/20 backdrop-blur-xl">
+              <p className="text-xs uppercase tracking-[0.22em] text-emerald-200/45">Status do Catálogo</p>
+              <p className="mt-2 text-2xl font-semibold text-white">{activeProductsCount}<span className="text-sm font-medium text-white/30">/{inactiveProductsCount}</span></p>
+            </div>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="secondary"
-            size="sm"
-            icon={<Filter size={14} />}
-            onClick={() => setFilterOpen(!filterOpen)}
-          >
-            Filtros
-            {Object.values(filters).some(v => v && v !== 'all') && (
-              <span className="w-1.5 h-1.5 rounded-full bg-indigo-400" />
-            )}
-          </Button>
-          <Button variant="primary" size="sm" icon={<Plus size={14} />} onClick={openAdd}>
-            Novo Produto
-          </Button>
+
+        <div className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-black/20 p-3 backdrop-blur-xl xl:flex-row xl:items-center xl:justify-between">
+          <h3 className="px-1 text-sm text-white/45">
+            <span className="font-semibold text-white/80">{filteredProducts.length}</span> produto{filteredProducts.length !== 1 ? 's' : ''} encontrado{filteredProducts.length !== 1 ? 's' : ''}
+          </h3>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="relative min-w-0 sm:w-80">
+              <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder="Buscar produto, SKU, marca..."
+                className="h-10 w-full rounded-xl border border-white/10 bg-white/[0.04] pl-9 pr-3 text-sm text-white outline-none transition placeholder:text-white/25 focus:border-violet-400/60 focus:bg-violet-500/[0.06] focus:shadow-[0_0_0_3px_rgba(139,92,246,0.12)]"
+              />
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              icon={<Filter size={14} />}
+              onClick={() => setFilterOpen(!filterOpen)}
+              className="h-10 rounded-xl border-white/15 bg-white/[0.02] px-4"
+            >
+              Filtros
+              {Object.values(filters).some(v => v && v !== 'all') && (
+                <span className="h-1.5 w-1.5 rounded-full bg-indigo-400 shadow-[0_0_12px_rgba(129,140,248,0.8)]" />
+              )}
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              icon={<Plus size={14} />}
+              onClick={openAdd}
+              className="h-10 rounded-xl bg-gradient-to-r from-violet-500 via-fuchsia-500 to-blue-500 px-5 shadow-[0_0_28px_rgba(99,102,241,0.35)] hover:shadow-[0_0_38px_rgba(99,102,241,0.55)]"
+            >
+              Novo Produto
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -423,19 +466,141 @@ export function ProductsPage() {
         )}
       </AnimatePresence>
 
-      {/* Table */}
+      {/* Product list */}
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
-        className="glass rounded-2xl overflow-hidden"
+        className="overflow-hidden rounded-[1.35rem] border border-white/10 bg-white/[0.025] shadow-2xl shadow-black/25 backdrop-blur-xl"
       >
-        <Table
-          columns={columns}
-          data={paginatedProducts}
-          keyExtractor={p => p.id}
-          emptyMessage="Nenhum produto encontrado"
-          emptyIcon={<Package size={32} />}
-        />
+        {paginatedProducts.length === 0 ? (
+          <div className="flex items-center justify-center py-20">
+            <div className="flex flex-col items-center gap-3 text-white/20">
+              <Package size={32} />
+              <p className="text-sm">Nenhum produto encontrado</p>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3 p-3">
+            {paginatedProducts.map((p, i) => (
+              <motion.div
+                key={p.id}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: i * 0.035, duration: 0.25 }}
+                className={`group relative grid gap-4 overflow-hidden rounded-2xl border bg-[#0d0d16]/80 p-4 shadow-lg shadow-black/20 transition-all duration-200 hover:-translate-y-0.5 hover:scale-[1.006] hover:bg-white/[0.045] ${
+                  p.totalQuantity === 0
+                    ? 'border-red-400/20 hover:border-red-400/45'
+                    : p.totalQuantity <= 5
+                      ? 'border-amber-400/20 hover:border-amber-300/45'
+                      : 'border-white/10 hover:border-violet-300/35'
+                } xl:grid-cols-[minmax(280px,1.8fr)_minmax(190px,1fr)_120px_150px_110px_112px] xl:items-center`}
+              >
+                <div className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+                  <div className="absolute -right-16 top-1/2 h-32 w-32 -translate-y-1/2 rounded-full bg-violet-500/10 blur-3xl" />
+                  <div className="absolute left-12 top-0 h-px w-48 bg-gradient-to-r from-transparent via-white/25 to-transparent" />
+                </div>
+
+                <div className="relative flex min-w-0 items-center gap-4">
+                  <div className="flex h-20 w-20 flex-shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-gray-900/80 shadow-inner shadow-white/5">
+                    {p.images && p.images.length > 0 && p.images[0] ? (
+                      <img src={p.images[0]} alt={p.name} className="h-full w-full object-cover" />
+                    ) : (
+                      <ImageIcon size={24} className="text-white/20" />
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate text-base font-semibold text-white">{p.name}</p>
+                    <p className="mt-1 truncate font-mono text-xs text-white/30">{p.sku}</p>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {p.tags.slice(0, 2).map(tag => (
+                        <span key={tag} className="rounded-full border border-white/10 bg-white/[0.035] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/35">
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="relative flex flex-wrap gap-2">
+                  <span className="inline-flex items-center rounded-full border border-violet-300/20 bg-violet-400/10 px-3 py-1 text-xs font-semibold text-violet-200">
+                    {p.brand?.name || 'Sem marca'}
+                  </span>
+                  <span className="inline-flex items-center rounded-full border border-blue-300/20 bg-blue-400/10 px-3 py-1 text-xs font-semibold text-blue-200">
+                    {p.category?.name || 'Sem categoria'}
+                  </span>
+                  {p.subcategory?.name && (
+                    <span className="inline-flex items-center rounded-full border border-white/10 bg-white/[0.035] px-3 py-1 text-xs font-medium text-white/45">
+                      {p.subcategory.name}
+                    </span>
+                  )}
+                </div>
+
+                <div className="relative flex items-center gap-3">
+                  <span className={`h-3 w-3 rounded-full ${
+                    p.totalQuantity === 0
+                      ? 'bg-red-400 shadow-[0_0_16px_rgba(248,113,113,0.9)]'
+                      : p.totalQuantity <= 5
+                        ? 'bg-amber-300 shadow-[0_0_16px_rgba(252,211,77,0.8)]'
+                        : 'bg-emerald-400 shadow-[0_0_16px_rgba(52,211,153,0.75)]'
+                  }`} />
+                  <div>
+                    <p className={`text-3xl font-semibold leading-none ${
+                      p.totalQuantity === 0 ? 'text-red-300' : p.totalQuantity <= 5 ? 'text-amber-200' : 'text-white'
+                    }`}>
+                      {p.totalQuantity}
+                    </p>
+                    <p className="mt-1 flex items-center gap-1 text-xs text-white/35">
+                      {(p.totalQuantity === 0 || p.totalQuantity <= 5) && <AlertTriangle size={12} />}
+                      unidades
+                    </p>
+                  </div>
+                </div>
+
+                <div className="relative">
+                  <p className="text-lg font-semibold text-white">
+                    R$ {p.salePrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </p>
+                  <p className="mt-1 text-xs text-white/35">
+                    Custo R$ {p.costPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </p>
+                </div>
+
+                <div className="relative">
+                  <Badge
+                    variant={statusConfig[p.status].variant}
+                    className={p.status === 'active' ? 'shadow-[0_0_18px_rgba(16,185,129,0.35)]' : ''}
+                  >
+                    {statusConfig[p.status].label}
+                  </Badge>
+                </div>
+
+                <div className="relative flex items-center justify-start gap-1 xl:justify-end">
+                  <button
+                    onClick={() => setViewingProduct(p)}
+                    className="rounded-xl border border-white/10 bg-white/[0.03] p-2 text-white/35 transition-all hover:border-white/25 hover:bg-white/[0.08] hover:text-white"
+                    aria-label="Visualizar produto"
+                  >
+                    <Eye size={16} />
+                  </button>
+                  <button
+                    onClick={() => openEdit(p)}
+                    className="rounded-xl border border-white/10 bg-white/[0.03] p-2 text-white/35 transition-all hover:border-blue-400/40 hover:bg-blue-500/10 hover:text-blue-300 hover:shadow-[0_0_18px_rgba(59,130,246,0.25)]"
+                    aria-label="Editar produto"
+                  >
+                    <Edit2 size={16} />
+                  </button>
+                  <button
+                    onClick={() => setDeleteConfirm(p)}
+                    className="rounded-xl border border-white/10 bg-white/[0.03] p-2 text-white/35 transition-all hover:border-red-400/40 hover:bg-red-500/10 hover:text-red-300 hover:shadow-[0_0_18px_rgba(239,68,68,0.25)]"
+                    aria-label="Excluir produto"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        )}
         {filteredProducts.length > ITEMS_PER_PAGE && (
           <Pagination
             currentPage={currentPage}

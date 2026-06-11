@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, Package, ArrowLeftRight, BarChart3,
   Bell, LogOut, ChevronLeft, ChevronRight,
-  Zap, ShoppingBag, AlertTriangle, DollarSign, Settings
+  ShoppingBag, AlertTriangle, DollarSign, Settings
 } from 'lucide-react';
 import { useStore } from '../../store/useStore';
 
@@ -60,17 +60,12 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
         }}
       >
         {/* Logo */}
-        <div className="flex items-center h-16 px-4 border-b border-white/[0.06] flex-shrink-0">
-          {storeConfig.logoUrl ? (
-            <img src={storeConfig.logoUrl} alt="Logo" className="w-8 h-8 rounded-xl object-cover flex-shrink-0" />
-          ) : (
-            <div
-              className="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0"
-              style={{ background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)' }}
-            >
-              <Zap size={16} className="text-white" />
-            </div>
-          )}
+        <div className="flex h-20 flex-shrink-0 items-center border-b border-gray-800/80 px-3">
+          <img
+            src={storeConfig.logoUrl || '/logo.jpeg'}
+            alt="Frazon Store"
+            className="h-12 w-12 flex-shrink-0 rounded-2xl border border-white/10 bg-white/[0.03] object-cover shadow-lg shadow-black/30"
+          />
           <AnimatePresence>
             {sidebarOpen && (
               <motion.div
@@ -80,15 +75,15 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
                 transition={{ duration: 0.2 }}
                 className="ml-3 overflow-hidden"
               >
-                <span className="font-bold text-white tracking-wider text-sm">{storeConfig.storeName}</span>
-                <span className="block text-[10px] text-white/30 font-medium tracking-widest">ADMIN</span>
+                <span className="block truncate text-sm font-bold tracking-wide text-white">FRAZON STORE</span>
+                <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400">ADMIN</span>
               </motion.div>
             )}
           </AnimatePresence>
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 px-3 py-4 overflow-y-auto space-y-1">
+        <nav className="flex-1 space-y-1.5 overflow-y-auto px-3 py-5">
           {navItems.map(item => {
             const isActive = currentPage === item.id;
             const badgeCount = item.id === 'alerts' ? unreadAlerts : 0;
@@ -96,16 +91,22 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
               <button
                 key={item.id}
                 onClick={() => onNavigate(item.id)}
-                className={`nav-item w-full flex items-center gap-3 px-3 py-2.5 text-left ${isActive ? 'active' : 'text-white/40 hover:text-white/70'}`}
+                className={`nav-item group relative flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-all duration-200 ${
+                  isActive
+                    ? 'active bg-indigo-500/15 text-white shadow-lg shadow-indigo-500/20 ring-1 ring-indigo-400/20'
+                    : 'bg-transparent text-gray-400 hover:bg-white/5 hover:text-white'
+                }`}
               >
-                <span className="flex-shrink-0">{item.icon}</span>
+                <span className={`flex-shrink-0 transition-colors duration-200 ${isActive ? 'text-white' : 'text-gray-400 group-hover:text-white'}`}>
+                  {item.icon}
+                </span>
                 <AnimatePresence>
                   {sidebarOpen && (
                     <motion.span
                       initial={{ opacity: 0, x: -5 }}
                       animate={{ opacity: 1, x: 0 }}
                       exit={{ opacity: 0, x: -5 }}
-                      className="text-sm font-medium whitespace-nowrap overflow-hidden"
+                      className="overflow-hidden whitespace-nowrap text-sm font-medium"
                     >
                       {item.label}
                     </motion.span>
@@ -118,7 +119,7 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
                         initial={{ opacity: 0, scale: 0.8 }}
                         animate={{ opacity: 1, scale: 1 }}
                         exit={{ opacity: 0, scale: 0.8 }}
-                        className="ml-auto text-[10px] font-bold bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center"
+                        className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 text-xs font-bold leading-none text-white shadow-lg shadow-red-500/25"
                       >
                         {badgeCount > 9 ? '9+' : badgeCount}
                       </motion.span>
@@ -126,7 +127,7 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
                       <motion.span
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
-                        className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full"
+                        className="absolute right-2 top-2 h-2 w-2 rounded-full bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.8)]"
                       />
                     )}
                   </AnimatePresence>
@@ -137,16 +138,16 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
         </nav>
 
         {/* Bottom section */}
-        <div className="border-t border-white/[0.06] p-3 space-y-1 flex-shrink-0">
+        <div className="flex-shrink-0 space-y-1.5 border-t border-gray-800/80 p-3">
           {/* Catalog shortcut */}
           <button
             onClick={() => onNavigate('admin_catalog')}
-            className={`nav-item w-full flex items-center gap-3 px-3 py-2.5 ${currentPage === 'admin_catalog' ? 'active' : 'text-white/30 hover:text-white/60'}`}
+            className={`nav-item group flex w-full items-center gap-3 rounded-lg px-3 py-2.5 transition-all duration-200 ${currentPage === 'admin_catalog' ? 'active bg-indigo-500/15 text-white shadow-lg shadow-indigo-500/20 ring-1 ring-indigo-400/20' : 'bg-transparent text-gray-400 hover:bg-white/5 hover:text-white'}`}
           >
-            <ShoppingBag size={18} className="flex-shrink-0" />
+            <ShoppingBag size={18} className={`flex-shrink-0 transition-colors duration-200 ${currentPage === 'admin_catalog' ? 'text-white' : 'text-gray-400 group-hover:text-white'}`} />
             <AnimatePresence>
               {sidebarOpen && (
-                <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-sm font-medium whitespace-nowrap">
+                <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="whitespace-nowrap text-sm font-medium">
                   Catálogo
                 </motion.span>
               )}
@@ -155,18 +156,18 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
 
           <button
             onClick={() => onNavigate('notifications')}
-            className={`nav-item w-full flex items-center gap-3 px-3 py-2.5 relative ${currentPage === 'notifications' ? 'active' : 'text-white/30 hover:text-white/60'}`}
+            className={`nav-item group relative flex w-full items-center gap-3 rounded-lg px-3 py-2.5 transition-all duration-200 ${currentPage === 'notifications' ? 'active bg-indigo-500/15 text-white shadow-lg shadow-indigo-500/20 ring-1 ring-indigo-400/20' : 'bg-transparent text-gray-400 hover:bg-white/5 hover:text-white'}`}
           >
-            <Bell size={18} className="flex-shrink-0" />
+            <Bell size={18} className={`flex-shrink-0 transition-colors duration-200 ${currentPage === 'notifications' ? 'text-white' : 'text-gray-400 group-hover:text-white'}`} />
             {unreadAlerts > 0 && !sidebarOpen && (
-              <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full" />
+              <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.8)]" />
             )}
             <AnimatePresence>
               {sidebarOpen && (
-                <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-sm font-medium whitespace-nowrap">
+                <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex flex-1 items-center whitespace-nowrap text-sm font-medium">
                   Notificações
                   {unreadAlerts > 0 && (
-                    <span className="ml-2 text-xs bg-red-500 text-white rounded-full px-1.5 py-0.5">{unreadAlerts}</span>
+                    <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 text-xs font-bold leading-none text-white shadow-lg shadow-red-500/25">{unreadAlerts > 9 ? '9+' : unreadAlerts}</span>
                   )}
                 </motion.span>
               )}
@@ -174,9 +175,9 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
           </button>
 
           {/* User info */}
-          <div className="flex items-center gap-3 px-3 py-2.5 mt-2 rounded-xl bg-white/[0.03] border border-white/[0.06]">
-            <div className="w-8 h-8 rounded-xl flex items-center justify-center bg-gradient-to-br from-indigo-500 to-purple-600 flex-shrink-0">
-              <span className="text-white font-bold text-xs">
+          <div className="group mt-3 flex cursor-pointer items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.035] px-3 py-3 shadow-lg shadow-black/20 transition-all duration-200 hover:border-indigo-400/25 hover:bg-white/[0.055]">
+            <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 shadow-lg shadow-indigo-500/20 ring-1 ring-white/10">
+              <span className="text-sm font-bold text-white">
                 {user?.name.charAt(0).toUpperCase()}
               </span>
             </div>
@@ -186,10 +187,10 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
-                  className="flex-1 min-w-0"
+                  className="min-w-0 flex-1"
                 >
-                  <p className="text-xs font-semibold text-white truncate">{user?.name}</p>
-                  <p className="text-[10px] text-white/30 truncate">{user?.role === 'admin' ? 'Administrador' : user?.role}</p>
+                  <p className="truncate text-sm font-semibold text-white">{user?.name}</p>
+                  <p className="truncate text-xs text-gray-400">{user?.role === 'admin' ? 'Administrador' : user?.role}</p>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -200,10 +201,10 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
                   onClick={logout}
-                  className="text-white/20 hover:text-red-400 transition-colors"
+                  className="rounded-lg p-1.5 text-gray-500 transition-all duration-200 hover:bg-red-500/10 hover:text-red-400 group-hover:text-gray-300"
                   title="Sair"
                 >
-                  <LogOut size={14} />
+                  <LogOut size={16} />
                 </motion.button>
               )}
             </AnimatePresence>
