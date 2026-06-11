@@ -61,11 +61,20 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
       >
         {/* Logo */}
         <div className="flex h-20 flex-shrink-0 items-center border-b border-gray-800/80 px-3">
-          <img
-            src={storeConfig.logoUrl || '/logo.jpeg'}
-            alt="Frazon Store"
-            className="h-12 w-12 flex-shrink-0 rounded-2xl border border-white/10 bg-white/[0.03] object-cover shadow-lg shadow-black/30"
-          />
+          <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] shadow-lg shadow-black/30">
+            <img
+              src={storeConfig.logoUrl || '/logo.jpeg'}
+              alt="Frazon Store"
+              onError={e => {
+                if (!e.currentTarget.src.endsWith('/logo.jpeg')) {
+                  e.currentTarget.src = '/logo.jpeg';
+                  return;
+                }
+                e.currentTarget.style.display = 'none';
+              }}
+              className="h-full w-full object-contain"
+            />
+          </div>
           <AnimatePresence>
             {sidebarOpen && (
               <motion.div

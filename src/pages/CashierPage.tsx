@@ -250,17 +250,6 @@ export function CashierPage() {
   return (
     <div className="flex-1 overflow-y-auto p-6 bg-[#080912]">
       <div className="space-y-6">
-        <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-violet-300/70">PDV</p>
-            <h1 className="text-2xl font-semibold text-white">Caixa | Registrar Vendas do Dia</h1>
-            <p className="text-sm text-white/40">Selecione produtos, revise a venda e finalize o atendimento.</p>
-          </div>
-          <div className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-xs text-white/50 backdrop-blur-xl">
-            {todaysSales.length} vendas hoje
-          </div>
-        </div>
-
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           {[
             { label: 'Vendas Hoje', value: formatBRL(totals.total), icon: <DollarSign size={18} />, accent: 'from-violet-500 to-fuchsia-500', width: 'w-4/5' },
@@ -295,46 +284,48 @@ export function CashierPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 2xl:grid-cols-3">
-              {productCards.map(({ product, variants, quantity: stock, price }) => {
-                const selectedVariantId = selectedVariantsByProduct[product.id];
-                const active = productId === product.id;
-                const image = getProductImage(product);
-                const availableVariants = variants.filter((variant: any) => safeNumber(variant.quantity, 0) > 0);
-                const selectedCardVariant = getSelectedVariantForProduct(product);
-                const displayPrice = safeNumber(selectedCardVariant?.salePrice ?? price, 0);
-                return (
-                  <div key={product.id} className={`group overflow-hidden rounded-2xl border p-3 text-left transition hover:-translate-y-0.5 hover:border-violet-300/50 hover:bg-white/[0.07] ${active ? 'border-violet-400/70 bg-violet-500/10' : 'border-white/10 bg-white/[0.035]'}`}>
-                    <button type="button" onClick={() => addProductToCart(product)} className="block w-full text-left">
-                      <div className="aspect-square overflow-hidden rounded-xl bg-gradient-to-br from-white/[0.08] to-white/[0.02]">
-                        {image ? <img src={image} alt={product.name} className="h-full w-full object-cover transition duration-300 group-hover:scale-105" /> : <div className="flex h-full w-full items-center justify-center text-3xl font-bold text-white/15">{(product.name || 'P').slice(0, 1)}</div>}
-                      </div>
-                      <div className="mt-3 space-y-1">
-                        <p className="line-clamp-1 text-sm font-semibold text-white">{product.name}</p>
-                        <p className="line-clamp-1 text-xs text-white/40">{selectedCardVariant ? `${selectedCardVariant.size} · ${selectedCardVariant.color}` : product.brand?.name || 'Produto padrão'}</p>
-                        <div className="flex items-center justify-between pt-2">
-                          <span className="text-sm font-bold text-violet-200">{formatBRL(displayPrice)}</span>
-                          <span className="rounded-full bg-white/[0.06] px-2 py-1 text-[11px] text-white/40">{stock} un.</span>
+            <div className="max-h-[72vh] overflow-y-auto overscroll-contain pr-1 [scrollbar-color:rgba(139,92,246,0.35)_transparent] [scrollbar-width:thin] xl:max-h-[calc(100vh-22rem)]">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {productCards.map(({ product, variants, quantity: stock, price }) => {
+                  const selectedVariantId = selectedVariantsByProduct[product.id];
+                  const active = productId === product.id;
+                  const image = getProductImage(product);
+                  const availableVariants = variants.filter((variant: any) => safeNumber(variant.quantity, 0) > 0);
+                  const selectedCardVariant = getSelectedVariantForProduct(product);
+                  const displayPrice = safeNumber(selectedCardVariant?.salePrice ?? price, 0);
+                  return (
+                    <div key={product.id} className={`group overflow-hidden rounded-2xl border p-3 text-left transition hover:-translate-y-0.5 hover:border-violet-300/50 hover:bg-white/[0.07] ${active ? 'border-violet-400/70 bg-violet-500/10' : 'border-white/10 bg-white/[0.035]'}`}>
+                      <button type="button" onClick={() => addProductToCart(product)} className="block w-full text-left">
+                        <div className="aspect-square overflow-hidden rounded-xl bg-gradient-to-br from-white/[0.08] to-white/[0.02]">
+                          {image ? <img src={image} alt={product.name} className="h-full w-full object-cover transition duration-300 group-hover:scale-105" /> : <div className="flex h-full w-full items-center justify-center text-3xl font-bold text-white/15">{(product.name || 'P').slice(0, 1)}</div>}
                         </div>
-                      </div>
-                    </button>
-                    {variants.length > 0 && (
-                      <div className="mt-3 flex flex-wrap gap-1.5">
-                        {variants.map((variant: any) => {
-                          const disabled = safeNumber(variant.quantity, 0) <= 0;
-                          const selected = (selectedVariantId || availableVariants[0]?.id) === variant.id;
-                          return (
-                            <button key={variant.id} type="button" disabled={disabled} onClick={() => setSelectedVariantsByProduct(current => ({ ...current, [product.id]: variant.id }))} className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold transition ${selected ? 'border-violet-300/70 bg-violet-500/20 text-white' : 'border-white/10 bg-white/[0.035] text-white/45 hover:bg-white/[0.07]'} ${disabled ? 'cursor-not-allowed opacity-35' : ''}`}>
-                              {[variant.size, variant.color].filter(Boolean).join(' · ') || 'Padrão'}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-              {productCards.length === 0 && <div className="col-span-full rounded-2xl border border-dashed border-white/10 bg-white/[0.02] p-8 text-center text-sm text-white/35">Nenhum produto disponível para venda.</div>}
+                        <div className="mt-3 space-y-1">
+                          <p className="line-clamp-1 text-sm font-semibold text-white">{product.name}</p>
+                          <p className="line-clamp-1 text-xs text-white/40">{selectedCardVariant ? `${selectedCardVariant.size} · ${selectedCardVariant.color}` : product.brand?.name || 'Produto padrão'}</p>
+                          <div className="flex items-center justify-between pt-2">
+                            <span className="text-sm font-bold text-violet-200">{formatBRL(displayPrice)}</span>
+                            <span className="rounded-full bg-white/[0.06] px-2 py-1 text-[11px] text-white/40">{stock} un.</span>
+                          </div>
+                        </div>
+                      </button>
+                      {variants.length > 0 && (
+                        <div className="mt-3 flex flex-wrap gap-1.5">
+                          {variants.map((variant: any) => {
+                            const disabled = safeNumber(variant.quantity, 0) <= 0;
+                            const selected = (selectedVariantId || availableVariants[0]?.id) === variant.id;
+                            return (
+                              <button key={variant.id} type="button" disabled={disabled} onClick={() => setSelectedVariantsByProduct(current => ({ ...current, [product.id]: variant.id }))} className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold transition ${selected ? 'border-violet-300/70 bg-violet-500/20 text-white' : 'border-white/10 bg-white/[0.035] text-white/45 hover:bg-white/[0.07]'} ${disabled ? 'cursor-not-allowed opacity-35' : ''}`}>
+                                {[variant.size, variant.color].filter(Boolean).join(' · ') || 'Padrão'}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {productCards.length === 0 && <div className="col-span-full rounded-2xl border border-dashed border-white/10 bg-white/[0.02] p-8 text-center text-sm text-white/35">Nenhum produto disponível para venda.</div>}
+              </div>
             </div>
           </Card>
 
