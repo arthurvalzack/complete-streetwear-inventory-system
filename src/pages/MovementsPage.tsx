@@ -22,6 +22,11 @@ function safeNumber(value: any, fallback = 0): number {
   return Number.isFinite(numeric) ? numeric : fallback;
 }
 
+function displayCustomerName(value: any): string {
+  const name = String(value || '').trim();
+  return name || 'Cliente n�o informado';
+}
+
 const movementTypeConfig = {
   entry: { label: 'Entrada', variant: 'success' as const, icon: <ArrowUpRight size={14} />, color: 'rgba(16,185,129,0.15)', textColor: '#34d399' },
   exit: { label: 'Saída', variant: 'danger' as const, icon: <ArrowDownRight size={14} />, color: 'rgba(239,68,68,0.15)', textColor: '#f87171' },
@@ -122,6 +127,7 @@ export function MovementsPage() {
       render: (m: StockMovement) => (
         <div>
           <p className="text-sm text-white/80 font-medium">{m.product?.name || m.productName || 'Produto nao encontrado'}</p>
+          <p className="text-xs text-white/35">Cliente: {displayCustomerName(m.customerName ?? (m as any).customer_name)}</p>
           {m.variant && (
             <p className="text-xs text-white/30">{m.variant.size} · {m.variant.color}</p>
           )}

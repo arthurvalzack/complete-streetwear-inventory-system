@@ -29,22 +29,27 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     e.preventDefault();
     if (!validate()) return;
     setLoading(true);
-    // Simulate async auth
-    await new Promise(r => setTimeout(r, 800));
-    const result = login(email, password);
-    setLoading(false);
-    if (result.success) {
-      toast.success('Bem-vindo à FRAZON STORE!');
-      onLogin();
-    } else {
-      toast.error(result.error || 'Erro ao fazer login');
-      setErrors({ password: result.error });
+    try {
+      const result = await login(email, password);
+      if (result.success) {
+        toast.success('Bem-vindo à FRAZON STORE!');
+        onLogin();
+      } else {
+        toast.error(result.error || 'Erro ao fazer login');
+        setErrors({ password: result.error });
+      }
+    } catch (error) {
+      console.error('[LOGIN ERROR]', error);
+      toast.error('Erro ao fazer login');
+      setErrors({ password: 'Erro ao fazer login' });
+    } finally {
+      setLoading(false);
     }
   };
 
   const fillAdmin = () => {
     setEmail('admin@admin.com');
-    setPassword('admin123@');
+    setPassword('');
     setErrors({});
   };
 
@@ -197,7 +202,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
               className="w-full flex items-center gap-2 text-xs text-white/30 hover:text-indigo-400 transition-colors"
             >
               <Shield size={13} />
-              <span>Acesso rápido: admin@admin.com / Admin123@</span>
+              <span>Acesso administrativo</span>
             </button>
           </div>
         </motion.div>

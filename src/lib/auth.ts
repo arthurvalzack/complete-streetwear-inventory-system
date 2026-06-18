@@ -1,106 +1,6 @@
-// Simple but real authentication system using localStorage + JWT-like tokens
+import type { Session, User as SupabaseAuthUser } from '@supabase/supabase-js';
 import { User } from '../types';
-
-const USERS_KEY = 'stck_users';
-const TOKEN_KEY = 'stck_token';
-const SESSION_KEY = 'stck_session';
-
-function safeGetItem(key: string): string | null {
-  try {
-    return localStorage.getItem(key);
-  } catch (error) {
-    console.error('[LOCAL STORAGE READ ERROR]', { key, error });
-    return null;
-  }
-}
-
-function safeSetItem(key: string, value: string): boolean {
-  try {
-    localStorage.setItem(key, value);
-    return true;
-  } catch (error) {
-    console.warn('[LOCAL STORAGE WRITE ERROR]', { key, error });
-    return false;
-  }
-}
-
-function safeRemoveItem(key: string): void {
-  try {
-    localStorage.removeItem(key);
-  } catch (error) {
-    console.error('[LOCAL STORAGE REMOVE ERROR]', { key, error });
-  }
-}
-
-// Simple hash function (production would use bcrypt via API)
-function simpleHash(str: string): string {
-  let hash = 0;
-  const salt = 'STCK_SALT_2024_SECURE';
-  const salted = str + salt;
-  for (let i = 0; i < salted.length; i++) {
-    const char = salted.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash;
-  }
-  return Math.abs(hash).toString(36) + salted.length.toString(36);
-}
-
-// JWT-like token creation
-function createToken(payload: object): string {
-  const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
-  const body = btoa(JSON.stringify({ ...payload, iat: Date.now(), exp: Date.now() + 24 * 60 * 60 * 1000 }));
-  const secret = 'STCK_JWT_SECRET_2024';
-  const signature = btoa(simpleHash(header + '.' + body + secret));
-  return `${header}.${body}.${signature}`;
-}
-
-function verifyToken(token: string): { valid: boolean; payload?: Record<string, unknown> } {
-  try {
-    const parts = token.split('.');
-    if (parts.length !== 3) return { valid: false };
-    const payload = JSON.parse(atob(parts[1])) as Record<string, unknown>;
-    if (typeof payload.exp === 'number' && payload.exp < Date.now()) return { valid: false };
-    return { valid: true, payload };
-  } catch {
-    return { valid: false };
-  }
-}
-
-interface StoredUser {
-  id: string;
-  email: string;
-  name: string;
-  role: 'admin' | 'manager' | 'viewer';
-  passwordHash: string;
-  createdAt: string;
-}
-
-function getStoredUsers(): StoredUser[] {
-  const raw = safeGetItem(USERS_KEY);
-  if (!raw) return [];
-  try { return JSON.parse(raw); } catch { return []; }
-}
-
-function saveStoredUsers(users: StoredUser[]): void {
-  safeSetItem(USERS_KEY, JSON.stringify(users));
-}
-
-export function initializeAuth(): void {
-  const users = getStoredUsers();
-  const adminExists = users.find(u => u.email === 'admin@admin.com');
-  if (!adminExists) {
-    const adminUser: StoredUser = {
-      id: 'user_admin_001',
-      email: 'admin@admin.com',
-      name: 'Administrador',
-      role: 'admin',
-      passwordHash: simpleHash('Admin123@'),
-      createdAt: new Date().toISOString(),
-    };
-    users.push(adminUser);
-    saveStoredUsers(users);
-  }
-}
+import { supabase, isSupabaseConfigured } from './supabase';
 
 export interface LoginResult {
   success: boolean;
@@ -109,52 +9,85 @@ export interface LoginResult {
   error?: string;
 }
 
-export function login(email: string, password: string): LoginResult {
-  const users = getStoredUsers();
-  const user = users.find(u => u.email.toLowerCase() === email.toLowerCase());
-  if (!user) {
-    return { success: false, error: 'Email ou senha inválidos.' };
-  }
-  const hash = simpleHash(password);
-  if (hash !== user.passwordHash) {
-    return { success: false, error: 'Email ou senha inválidos.' };
-  }
-  const publicUser: User = {
+const VALID_ROLES: User['role'][] = ['admin', 'manager', 'viewer'];
+
+function getRole(value: unknown): User['role'] {
+  return VALID_ROLES.includes(value as User['role']) ? value as User['role'] : 'admin';
+}
+
+function getDisplayName(user: SupabaseAuthUser): string {
+  const metadata = user.user_metadata || {};
+  const name = metadata.name || metadata.full_name || metadata.display_name;
+  if (typeof name === 'string' && name.trim()) return name.trim();
+  if (user.email) return user.email.split('@')[0];
+  return 'Usuario';
+}
+
+function toAppUser(user: SupabaseAuthUser): User {
+  return {
     id: user.id,
-    email: user.email,
-    name: user.name,
-    role: user.role,
-    createdAt: user.createdAt,
+    email: user.email || '',
+    name: getDisplayName(user),
+    role: getRole(user.user_metadata?.role),
+    avatar: typeof user.user_metadata?.avatar_url === 'string' ? user.user_metadata.avatar_url : undefined,
+    createdAt: user.created_at || new Date().toISOString(),
   };
-  const token = createToken({ userId: user.id, email: user.email, role: user.role });
-  safeSetItem(TOKEN_KEY, token);
-  safeSetItem(SESSION_KEY, JSON.stringify(publicUser));
-  return { success: true, user: publicUser, token };
 }
 
-export function logout(): void {
-  safeRemoveItem(TOKEN_KEY);
-  safeRemoveItem(SESSION_KEY);
+function sessionToLoginResult(session: Session | null): LoginResult {
+  if (!session?.user || !session.access_token) {
+    return { success: false, error: 'Sessao invalida. Faca login novamente.' };
+  }
+
+  return {
+    success: true,
+    user: toAppUser(session.user),
+    token: session.access_token,
+  };
 }
 
-export function getSession(): { user: User | null; token: string | null } {
-  const token = safeGetItem(TOKEN_KEY);
-  const sessionRaw = safeGetItem(SESSION_KEY);
-  if (!token || !sessionRaw) return { user: null, token: null };
-  const { valid } = verifyToken(token);
-  if (!valid) {
-    logout();
+export function initializeAuth(): void {
+  // Supabase Auth initializes its persisted browser session through the Supabase client.
+}
+
+export async function login(email: string, password: string): Promise<LoginResult> {
+  if (!isSupabaseConfigured || !supabase) {
+    return { success: false, error: 'Supabase nao configurado para autenticacao.' };
+  }
+
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email: email.trim(),
+    password,
+  });
+
+  if (error) {
+    return { success: false, error: 'Email ou senha invalidos.' };
+  }
+
+  return sessionToLoginResult(data.session);
+}
+
+export async function logout(): Promise<void> {
+  if (!isSupabaseConfigured || !supabase) return;
+  const { error } = await supabase.auth.signOut();
+  if (error) console.error('[SUPABASE SIGN OUT ERROR]', error);
+}
+
+export async function getSession(): Promise<{ user: User | null; token: string | null }> {
+  if (!isSupabaseConfigured || !supabase) return { user: null, token: null };
+
+  const { data, error } = await supabase.auth.getSession();
+  if (error || !data.session?.user || !data.session.access_token) {
     return { user: null, token: null };
   }
-  try {
-    const user = JSON.parse(sessionRaw) as User;
-    return { user, token };
-  } catch {
-    return { user: null, token: null };
-  }
+
+  return {
+    user: toAppUser(data.session.user),
+    token: data.session.access_token,
+  };
 }
 
-export function isAuthenticated(): boolean {
-  const { user } = getSession();
+export async function isAuthenticated(): Promise<boolean> {
+  const { user } = await getSession();
   return !!user;
 }

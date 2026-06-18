@@ -92,6 +92,7 @@ create table if not exists movements (
   type text not null,
   product_id text,
   product_name text,
+  customer_name text,
   brand_name text,
   category_name text,
   subcategory_name text,
@@ -120,6 +121,7 @@ create table if not exists movements (
 alter table movements add column if not exists type text;
 alter table movements add column if not exists product_id text;
 alter table movements add column if not exists product_name text;
+alter table movements add column if not exists customer_name text;
 alter table movements add column if not exists brand_name text;
 alter table movements add column if not exists category_name text;
 alter table movements add column if not exists subcategory_name text;

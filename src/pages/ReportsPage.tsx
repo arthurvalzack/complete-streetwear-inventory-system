@@ -1,13 +1,15 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   Download, FileText, FileSpreadsheet,
   TrendingUp, Package, DollarSign, BarChart3
 } from 'lucide-react';
-import { format } from 'date-fns';
+import { endOfDay, endOfMonth, format, isValid, parseISO, startOfDay, startOfMonth } from 'date-fns';
 import { useStore } from '../store/useStore';
 import { Badge } from '../components/ui/Badge';
 import toast from 'react-hot-toast';
+
+type PeriodFilter = 'general' | 'date' | 'month';
 
 function safeNumber(value: any, fallback = 0): number {
   if (value === null || value === undefined || value === '') return fallback;
@@ -29,18 +31,119 @@ function formatMoney(value: any): string {
   return safeNumber(value, 0).toFixed(2).replace('.', ',');
 }
 
+function formatBRL(value: any): string {
+  return safeNumber(value, 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
+function displayCustomerName(value: any): string {
+  const name = String(value || '').trim();
+  return name || 'Cliente não informado';
+}
+
+function parseMovementDate(movement: any): Date | null {
+  const rawDate = movement?.createdAt ?? movement?.created_at;
+  if (!rawDate) return null;
+  const parsed = typeof rawDate === 'string' ? parseISO(rawDate) : new Date(rawDate);
+  return isValid(parsed) ? parsed : null;
+}
+
+function isSaleMovement(movement: any): boolean {
+  const type = String(movement?.type || '').toLowerCase();
+  const reason = String(movement?.reason || '').toLowerCase();
+  return type === 'exit' || reason.includes('venda');
+}
+
+const typeMap: Record<string, string> = {
+  entry: 'Entrada',
+  exit: 'Saída',
+  adjustment: 'Ajuste',
+  transfer: 'Transferência',
+  return: 'Devolução',
+};
+
 export function ReportsPage() {
   const { products, movements } = useStore();
   const [loadingReport, setLoadingReport] = useState<string | null>(null);
+  const [periodFilter, setPeriodFilter] = useState<PeriodFilter>('general');
+  const [selectedDate, setSelectedDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [selectedMonth, setSelectedMonth] = useState(format(new Date(), 'yyyy-MM'));
+
+  const activePeriod = useMemo(() => {
+    if (periodFilter === 'date') {
+      const parsed = parseISO(selectedDate);
+      if (!isValid(parsed)) return null;
+      return {
+        start: startOfDay(parsed),
+        end: endOfDay(parsed),
+        fileSuffix: selectedDate,
+        label: `Data específica: ${format(parsed, 'dd/MM/yyyy')}`,
+        pdfTitle: `Relatório de Vendas - ${format(parsed, 'dd/MM/yyyy')}`,
+      };
+    }
+
+    if (periodFilter === 'month') {
+      const parsed = parseISO(`${selectedMonth}-01`);
+      if (!isValid(parsed)) return null;
+      return {
+        start: startOfMonth(parsed),
+        end: endOfMonth(parsed),
+        fileSuffix: `mes-${selectedMonth}`,
+        label: `Mês inteiro: ${format(parsed, 'MM/yyyy')}`,
+        pdfTitle: `Relatório Mensal de Vendas - ${format(parsed, 'MM/yyyy')}`,
+      };
+    }
+
+    return {
+      start: null,
+      end: null,
+      fileSuffix: 'geral',
+      label: 'Geral',
+      pdfTitle: 'Relatório Geral de Vendas',
+    };
+  }, [periodFilter, selectedDate, selectedMonth]);
+
+  const filteredMovements = useMemo(() => {
+    if (!activePeriod || !activePeriod.start || !activePeriod.end) return movements;
+    return movements.filter(movement => {
+      const movementDate = parseMovementDate(movement);
+      if (!movementDate) return false;
+      return movementDate >= activePeriod.start! && movementDate <= activePeriod.end!;
+    });
+  }, [activePeriod, movements]);
+
+  const filteredSales = useMemo(
+    () => filteredMovements.filter(isSaleMovement),
+    [filteredMovements]
+  );
+
+  const filteredTotals = useMemo(() => {
+    return filteredSales.reduce(
+      (acc, movement) => {
+        const values = movementTotals(movement);
+        acc.total += values.totalAmount;
+        acc.cost += values.totalCost;
+        acc.profit += values.totalProfit;
+        acc.items += values.qty;
+        return acc;
+      },
+      { total: 0, cost: 0, profit: 0, items: 0 }
+    );
+  }, [filteredSales]);
+
+  const totalStock = products.reduce((acc, p) => acc + safeNumber(p.totalQuantity, 0), 0);
+
+  const reportFilename = (base: string) => `${base}-${activePeriod?.fileSuffix || 'geral'}`;
 
   const generateCSV = (filename: string, headers: string[], rows: string[][]) => {
     const bom = '\uFEFF';
-    const csv = bom + [headers, ...rows].map(row => row.map(cell => `"${cell}"`).join(';')).join('\n');
+    const csv = bom + [headers, ...rows]
+      .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(';'))
+      .join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${filename}_${format(new Date(), 'yyyy-MM-dd')}.csv`;
+    a.download = `${filename}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -95,27 +198,28 @@ export function ReportsPage() {
   const exportMovementsCSV = async () => {
     setLoadingReport('movements_csv');
     await new Promise(r => setTimeout(r, 600));
-    const headers = ['ID', 'Produto', 'Tipo', 'Quantidade', 'Preço Unit.', 'Valor Total', 'Estoque Anterior', 'Estoque Novo', 'Motivo', 'Observações', 'Data'];
-    const typeMap: Record<string, string> = {
-      entry: 'Entrada', exit: 'Saída', adjustment: 'Ajuste', transfer: 'Transferência', return: 'Devolução'
-    };
-    const rows = movements.map(m => {
+    const headers = ['ID', 'Produto', 'Cliente', 'Tipo', 'Quantidade', 'Preço Unit.', 'Valor Total', 'Custo Total', 'Lucro', 'Estoque Anterior', 'Estoque Novo', 'Motivo', 'Observações', 'Data'];
+    const rows = filteredMovements.map(m => {
       const values = movementTotals(m);
+      const movementDate = parseMovementDate(m);
       return [
         m.id,
         m.product?.name || m.productName || m.productId,
+        displayCustomerName(m.customerName ?? (m as any).customer_name),
         typeMap[m.type] || m.type,
         String(values.qty),
         `R$ ${formatMoney(values.unitPrice)}`,
         `R$ ${formatMoney(values.totalAmount)}`,
+        `R$ ${formatMoney(values.totalCost)}`,
+        `R$ ${formatMoney(values.totalProfit)}`,
         String(safeNumber(m.previousQuantity, 0)),
         String(safeNumber(m.newQuantity, 0)),
         m.reason,
         m.notes || '',
-        format(new Date(m.createdAt), 'dd/MM/yyyy HH:mm'),
+        movementDate ? format(movementDate, 'dd/MM/yyyy HH:mm') : '',
       ];
     });
-    generateCSV('movimentacoes', headers, rows);
+    generateCSV(reportFilename('relatorio'), headers, rows);
     setLoadingReport(null);
     toast.success('Relatório de movimentações exportado!');
   };
@@ -123,7 +227,6 @@ export function ReportsPage() {
   const exportStockSummaryCSV = async () => {
     setLoadingReport('summary_csv');
     await new Promise(r => setTimeout(r, 600));
-    // Category summary
     const catSummary: Record<string, { qty: number; costVal: number; saleVal: number; count: number }> = {};
     products.forEach(p => {
       const cat = p.category?.name || 'Outros';
@@ -150,20 +253,17 @@ export function ReportsPage() {
   const exportPDF = async (type: string) => {
     setLoadingReport(`${type}_pdf`);
     await new Promise(r => setTimeout(r, 800));
-    // Use jsPDF
     try {
       const { jsPDF } = await import('jspdf');
       const autoTable = (await import('jspdf-autotable')).default;
-
       const doc = new jsPDF({ orientation: 'landscape' });
 
-      // Header
       doc.setFillColor(10, 10, 20);
       doc.rect(0, 0, 297, 297, 'F');
       doc.setTextColor(255, 255, 255);
       doc.setFontSize(20);
       doc.setFont('helvetica', 'bold');
-      doc.text('FRAZON STORE — Sistema de Estoque Streetwear', 14, 18);
+      doc.text('FRAZON STORE - Sistema de Estoque Streetwear', 14, 18);
       doc.setFontSize(10);
       doc.setFont('helvetica', 'normal');
       doc.setTextColor(150, 150, 180);
@@ -199,36 +299,41 @@ export function ReportsPage() {
       } else if (type === 'movements') {
         doc.setTextColor(255, 255, 255);
         doc.setFontSize(14);
-        doc.text('Relatório de Movimentações', 14, 38);
-        const typeMap: Record<string, string> = {
-          entry: 'Entrada', exit: 'Saída', adjustment: 'Ajuste', transfer: 'Transferência', return: 'Devolução'
-        };
+        doc.setFont('helvetica', 'bold');
+        doc.text(activePeriod?.pdfTitle || 'Relatório Geral de Vendas', 14, 38);
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(150, 150, 180);
+        doc.text(`Período: ${activePeriod?.label || 'Geral'}`, 14, 45);
+
         autoTable(doc, {
-          startY: 44,
-          head: [['Produto', 'Tipo', 'Quantidade', 'Preço Unit.', 'Valor Total', 'Anterior', 'Novo', 'Motivo', 'Data']],
-          body: movements.slice(0, 100).map(m => {
+          startY: 51,
+          head: [['Produto', 'Cliente', 'Tipo', 'Qtd', 'Valor', 'Custo', 'Lucro', 'Motivo', 'Data']],
+          body: filteredMovements.map(m => {
             const values = movementTotals(m);
+            const movementDate = parseMovementDate(m);
             return [
               (m.product?.name || m.productName || m.productId).substring(0, 25),
+              displayCustomerName(m.customerName ?? (m as any).customer_name).substring(0, 24),
               typeMap[m.type] || m.type,
               values.qty,
-              `R$ ${safeNumber(values.unitPrice, 0).toFixed(2)}`,
               `R$ ${safeNumber(values.totalAmount, 0).toFixed(2)}`,
-              safeNumber(m.previousQuantity, 0),
-              safeNumber(m.newQuantity, 0),
-              m.reason.substring(0, 30),
-              format(new Date(m.createdAt), 'dd/MM/yyyy HH:mm'),
+              `R$ ${safeNumber(values.totalCost, 0).toFixed(2)}`,
+              `R$ ${safeNumber(values.totalProfit, 0).toFixed(2)}`,
+              String(m.reason || '').substring(0, 30),
+              movementDate ? format(movementDate, 'dd/MM/yyyy HH:mm') : '',
             ];
           }),
-          headStyles: { fillColor: [99, 102, 241], textColor: 255, fontStyle: 'bold', fontSize: 9 },
-          bodyStyles: { fontSize: 8, textColor: [200, 200, 220] },
+          headStyles: { fillColor: [99, 102, 241], textColor: 255, fontStyle: 'bold', fontSize: 8 },
+          bodyStyles: { fontSize: 7, textColor: [200, 200, 220] },
           alternateRowStyles: { fillColor: [20, 20, 35] },
         });
-        doc.save(`movimentacoes_${format(new Date(), 'yyyy-MM-dd')}.pdf`);
+        doc.save(`${reportFilename('relatorio')}.pdf`);
       }
 
       toast.success('PDF gerado com sucesso!');
     } catch (err) {
+      console.error('[REPORT PDF EXPORT ERROR]', err);
       toast.error('Erro ao gerar PDF. Tente o CSV.');
     }
     setLoadingReport(null);
@@ -239,8 +344,8 @@ export function ReportsPage() {
     await new Promise(r => setTimeout(r, 700));
     try {
       const XLSX = await import('xlsx');
+      const wb = XLSX.utils.book_new();
 
-      let wb = XLSX.utils.book_new();
       if (type === 'products') {
         const data = products.map(p => ({
           'SKU': p.sku,
@@ -258,7 +363,6 @@ export function ReportsPage() {
         const ws = XLSX.utils.json_to_sheet(data);
         XLSX.utils.book_append_sheet(wb, ws, 'Produtos');
 
-        // Variants sheet
         const varData: object[] = [];
         products.forEach(p => {
           p.variants.forEach(v => {
@@ -275,42 +379,40 @@ export function ReportsPage() {
         });
         const ws2 = XLSX.utils.json_to_sheet(varData);
         XLSX.utils.book_append_sheet(wb, ws2, 'Variações');
-
         XLSX.writeFile(wb, `produtos_${format(new Date(), 'yyyy-MM-dd')}.xlsx`);
       } else if (type === 'movements') {
-        const typeMap: Record<string, string> = {
-          entry: 'Entrada', exit: 'Saída', adjustment: 'Ajuste', transfer: 'Transferência', return: 'Devolução'
-        };
-        const data = movements.map(m => {
+        const data = filteredMovements.map(m => {
           const values = movementTotals(m);
+          const movementDate = parseMovementDate(m);
           return {
             'ID': m.id,
             'Produto': m.product?.name || m.productName || m.productId,
+            'Cliente': displayCustomerName(m.customerName ?? (m as any).customer_name),
             'Tipo': typeMap[m.type] || m.type,
             'Quantidade': values.qty,
             'Preço Unit.': safeNumber(values.unitPrice, 0).toFixed(2),
             'Valor Total': safeNumber(values.totalAmount, 0).toFixed(2),
+            'Custo Total': safeNumber(values.totalCost, 0).toFixed(2),
+            'Lucro': safeNumber(values.totalProfit, 0).toFixed(2),
             'Estoque Anterior': safeNumber(m.previousQuantity, 0),
             'Estoque Novo': safeNumber(m.newQuantity, 0),
             'Motivo': m.reason,
             'Observações': m.notes || '',
-            'Data': format(new Date(m.createdAt), 'dd/MM/yyyy HH:mm'),
+            'Data': movementDate ? format(movementDate, 'dd/MM/yyyy HH:mm') : '',
           };
         });
         const ws = XLSX.utils.json_to_sheet(data);
         XLSX.utils.book_append_sheet(wb, ws, 'Movimentações');
-        XLSX.writeFile(wb, `movimentacoes_${format(new Date(), 'yyyy-MM-dd')}.xlsx`);
+        XLSX.writeFile(wb, `${reportFilename('relatorio')}.xlsx`);
       }
+
       toast.success('Excel exportado com sucesso!');
     } catch (err) {
+      console.error('[REPORT XLSX EXPORT ERROR]', err);
       toast.error('Erro ao exportar Excel.');
     }
     setLoadingReport(null);
   };
-
-  const totalStock = products.reduce((acc, p) => acc + safeNumber(p.totalQuantity, 0), 0);
-  const totalCost = products.reduce((acc, p) => acc + safeNumber(p.costPrice, 0) * safeNumber(p.totalQuantity, 0), 0);
-  const totalSale = products.reduce((acc, p) => acc + safeNumber(p.salePrice, 0) * safeNumber(p.totalQuantity, 0), 0);
 
   const reportCards = [
     {
@@ -324,21 +426,71 @@ export function ReportsPage() {
     {
       id: 'movements',
       title: 'Relatório de Movimentações',
-      description: 'Histórico completo de entradas, saídas, ajustes e devoluções.',
+      description: 'Histórico de entradas, saídas, ajustes e devoluções dentro do período selecionado.',
       icon: <BarChart3 size={20} />,
       color: '#34d399',
-      stats: `${movements.length} movimentações`,
+      stats: `${filteredMovements.length} movimentações no período`,
     },
   ];
 
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-6">
-      {/* Summary Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="glass rounded-2xl p-5"
+      >
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-indigo-300/70">Período do relatório</p>
+            <h2 className="mt-1 text-lg font-semibold text-white">{activePeriod?.label || 'Geral'}</h2>
+            <p className="mt-1 text-xs text-white/35">Os totais e exports de movimentações usam apenas o período selecionado.</p>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-[180px_180px] lg:grid-cols-[180px_180px_180px]">
+            <label>
+              <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-white/35">Tipo</span>
+              <select
+                value={periodFilter}
+                onChange={e => setPeriodFilter(e.target.value as PeriodFilter)}
+                className="input-dark w-full rounded-xl px-3 py-2.5 text-sm"
+              >
+                <option value="general">Geral</option>
+                <option value="date">Data específica</option>
+                <option value="month">Mês inteiro</option>
+              </select>
+            </label>
+            {periodFilter === 'date' && (
+              <label>
+                <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-white/35">Data</span>
+                <input
+                  type="date"
+                  value={selectedDate}
+                  onChange={e => setSelectedDate(e.target.value)}
+                  className="input-dark w-full rounded-xl px-3 py-2.5 text-sm"
+                />
+              </label>
+            )}
+            {periodFilter === 'month' && (
+              <label>
+                <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-white/35">Mês</span>
+                <input
+                  type="month"
+                  value={selectedMonth}
+                  onChange={e => setSelectedMonth(e.target.value)}
+                  className="input-dark w-full rounded-xl px-3 py-2.5 text-sm"
+                />
+              </label>
+            )}
+          </div>
+        </div>
+      </motion.div>
+
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         {[
-          { label: 'Produtos Cadastrados', value: products.length, icon: <Package size={18} />, color: '#818cf8' },
-          { label: 'Valor em Custo', value: safeNumber(totalCost, 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }), icon: <DollarSign size={18} />, color: '#fbbf24' },
-          { label: 'Valor em Venda', value: safeNumber(totalSale, 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }), icon: <TrendingUp size={18} />, color: '#34d399' },
+          { label: 'Total Vendido', value: formatBRL(filteredTotals.total), icon: <TrendingUp size={18} />, color: '#34d399' },
+          { label: 'Custo das Vendas', value: formatBRL(filteredTotals.cost), icon: <DollarSign size={18} />, color: '#fbbf24' },
+          { label: 'Lucro', value: formatBRL(filteredTotals.profit), icon: <BarChart3 size={18} />, color: '#818cf8' },
+          { label: 'Vendas / Mov.', value: `${filteredSales.length}/${filteredMovements.length}`, icon: <Package size={18} />, color: '#c084fc' },
         ].map((s, i) => (
           <motion.div
             key={s.label}
@@ -358,7 +510,53 @@ export function ReportsPage() {
         ))}
       </div>
 
-      {/* Report Cards */}
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.12 }}
+        className="glass rounded-2xl overflow-hidden"
+      >
+        <div className="flex items-center justify-between border-b border-white/[0.06] px-5 py-4">
+          <div>
+            <h3 className="text-sm font-semibold text-white">Movimentações do período</h3>
+            <p className="text-xs text-white/30">{filteredMovements.length} registros encontrados</p>
+          </div>
+          <Badge variant="outline" size="sm">{activePeriod?.label || 'Geral'}</Badge>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-white/[0.06]">
+                {['Data', 'Produto', 'Cliente', 'Tipo', 'Valor', 'Lucro'].map(header => (
+                  <th key={header} className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-widest text-white/30">{header}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filteredMovements.slice(0, 10).map(movement => {
+                const values = movementTotals(movement);
+                const movementDate = parseMovementDate(movement);
+                return (
+                  <tr key={movement.id} className="border-b border-white/[0.04] last:border-0">
+                    <td className="px-4 py-3 text-sm text-white/45">{movementDate ? format(movementDate, 'dd/MM/yyyy HH:mm') : '-'}</td>
+                    <td className="max-w-[240px] truncate px-4 py-3 text-sm text-white/80">{movement.product?.name || movement.productName || movement.productId}</td>
+                    <td className="max-w-[180px] truncate px-4 py-3 text-sm text-white/60">{displayCustomerName(movement.customerName ?? (movement as any).customer_name)}</td>
+                    <td className="px-4 py-3 text-sm text-white/60">{typeMap[movement.type] || movement.type}</td>
+                    <td className="px-4 py-3 text-sm font-semibold text-white">{formatBRL(values.totalAmount)}</td>
+                    <td className="px-4 py-3 text-sm text-emerald-300">{formatBRL(values.totalProfit)}</td>
+                  </tr>
+                );
+              })}
+              {filteredMovements.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-8 text-center text-sm text-white/35">Nenhuma movimentação encontrada para o período.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </motion.div>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {reportCards.map((report, i) => (
           <motion.div
@@ -381,9 +579,7 @@ export function ReportsPage() {
 
             <div className="space-y-2">
               <p className="text-xs text-white/30 uppercase tracking-wider font-medium mb-3">Exportar como:</p>
-
               <div className="grid grid-cols-3 gap-2">
-                {/* CSV */}
                 <button
                   onClick={() => report.id === 'products' ? exportProductsCSV() : exportMovementsCSV()}
                   disabled={loadingReport !== null}
@@ -397,7 +593,6 @@ export function ReportsPage() {
                   <span className="text-xs text-white/50 font-medium">CSV</span>
                 </button>
 
-                {/* XLSX */}
                 <button
                   onClick={() => exportXLSX(report.id)}
                   disabled={loadingReport !== null}
@@ -411,7 +606,6 @@ export function ReportsPage() {
                   <span className="text-xs text-white/50 font-medium">Excel</span>
                 </button>
 
-                {/* PDF */}
                 <button
                   onClick={() => exportPDF(report.id)}
                   disabled={loadingReport !== null}
@@ -429,7 +623,6 @@ export function ReportsPage() {
           </motion.div>
         ))}
 
-        {/* Quick Exports */}
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
@@ -479,7 +672,6 @@ export function ReportsPage() {
           </div>
         </motion.div>
 
-        {/* Info card */}
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
@@ -494,7 +686,7 @@ export function ReportsPage() {
               { label: 'Formato CSV', desc: 'Compatível com Excel, Google Sheets e LibreOffice. Encoding UTF-8 com BOM.' },
               { label: 'Formato Excel', desc: 'Arquivo .xlsx com múltiplas planilhas quando aplicável.' },
               { label: 'Formato PDF', desc: 'Layout profissional com tema dark. Ideal para impressão e envio.' },
-              { label: 'Atualização', desc: 'Dados em tempo real. Exportação reflete o estado atual do estoque.' },
+              { label: 'Atualização', desc: 'Dados em tempo real. Exportação reflete o período selecionado.' },
             ].map(item => (
               <div key={item.label} className="border-b border-white/[0.05] pb-3 last:border-0 last:pb-0">
                 <p className="text-xs font-semibold text-white/60">{item.label}</p>
@@ -508,3 +700,4 @@ export function ReportsPage() {
   );
 }
 
+export default ReportsPage;

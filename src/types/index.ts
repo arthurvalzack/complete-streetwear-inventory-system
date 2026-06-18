@@ -68,6 +68,10 @@ export interface Product {
   salePrice: number;
   createdAt: string;
   updatedAt: string;
+  externalSource?: string;
+  externalId?: string;
+  external_source?: string;
+  external_id?: string;
 }
 
 export type MovementType = 'entry' | 'exit' | 'adjustment' | 'transfer' | 'return';
@@ -96,6 +100,7 @@ export interface StockMovement {
   profit?: number;
   // Snapshot of product name to avoid lookup later
   productName?: string;
+  customerName?: string;
   reason: string;
   notes?: string;
   userId: string;
@@ -145,3 +150,4 @@ export interface StoreConfig {
   createdAt: string;
   updatedAt: string;
 }
+

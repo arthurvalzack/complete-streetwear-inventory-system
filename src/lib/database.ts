@@ -155,7 +155,14 @@ export function normalizeProduct(p: any): Product {
 export function getMovements(): StockMovement[] {
   const raw = safeGetLocalStorage(MOVEMENTS_KEY);
   if (!raw) return [];
-  try { return JSON.parse(raw); } catch { return []; }
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((movement: any) => ({
+      ...movement,
+      customerName: movement.customerName ?? movement.customer_name ?? '',
+    }));
+  } catch { return []; }
 }
 
 export function getBrands(): Brand[] {
@@ -401,6 +408,8 @@ export function productToSupabase(p: Product): any {
     tags: p.tags || [],
     min_stock: safeNumber((p as any).minStock ?? (p as any).min_stock, 0),
     total_quantity: safeNumber(p.totalQuantity, 0),
+    external_source: (p as any).externalSource || (p as any).external_source || null,
+    external_id: (p as any).externalId || (p as any).external_id || null,
     created_at: p.createdAt,
     updated_at: p.updatedAt,
   };
@@ -446,6 +455,10 @@ export function productFromSupabase(row: any): Product {
     salePrice: safeNumber(row.sale_price, 0),
     createdAt: row.created_at || new Date().toISOString(),
     updatedAt: row.updated_at || new Date().toISOString(),
+    externalSource: row.external_source || row.externalSource || undefined,
+    externalId: row.external_id || row.externalId || undefined,
+    external_source: row.external_source || undefined,
+    external_id: row.external_id || undefined,
   };
   return normalizeProduct(prod as any);
 }
@@ -453,11 +466,13 @@ export function productFromSupabase(row: any): Product {
 export function movementToSupabase(m: any): any {
   const totals = getMovementTotals(m);
   const variantName = m.variantName || m.variant_name || (m.variant ? [m.variant.size, m.variant.color].filter(Boolean).join(' ') : null);
+  const customerName = String(m.customerName ?? m.customer_name ?? '').trim();
   return {
     id: m.id,
     type: m.type || 'exit',
     product_id: m.productId || m.product_id,
     product_name: m.productName || m.product_name,
+    customer_name: customerName || null,
     variant_id: m.variantId || m.variant_id || null,
     variant_name: variantName || null,
     quantity: totals.quantity,
@@ -489,6 +504,7 @@ export function movementFromSupabase(row: any): StockMovement {
     type: row.type || 'exit',
     productId: row.product_id,
     productName: row.product_name || prodSnapshot?.name || localProduct?.name || 'Produto nao encontrado',
+    customerName: row.customer_name || '',
     brand: row.brand_name,
     category: row.category_name,
     subcategory: row.subcategory_name,
@@ -715,8 +731,9 @@ export async function registerSale(params: {
   userId?: string;
   reason?: string;
   notes?: string;
+  customerName?: string;
 }): Promise<StockMovement | null> {
-  const { productId, variantId, quantity, userId, reason = 'Venda', notes = '' } = params;
+  const { productId, variantId, quantity, userId, reason = 'Venda', notes = '', customerName = '' } = params;
   if (!productId) throw new Error('productId required');
   if (!quantity || Number(quantity) <= 0) throw new Error('quantity must be > 0');
 
@@ -738,6 +755,7 @@ export async function registerSale(params: {
       quantity: Number(quantity),
       reason,
       notes,
+      customerName: customerName.trim(),
       userId: userId || 'system',
     } as any);
   } finally {
@@ -1842,3 +1860,4 @@ export function seedDatabase(): void {
   suppressRemoteSync = false;
   safeSetLocalStorage(INITIALIZED_KEY, 'true');
 }
+

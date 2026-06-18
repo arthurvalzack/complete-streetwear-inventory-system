@@ -144,24 +144,25 @@ function App() {
     initializeAuth();
 
     (async () => {
-      // If Supabase is configured, prefer loading remote state first.
-      if (isSupabaseConfigured) {
+      await initSession();
+      const hasAuthenticatedSession = useStore.getState().isAuthenticated;
+
+      if (isSupabaseConfigured && hasAuthenticatedSession) {
         await loadRemoteToLocal();
-        // Ensure base taxonomy exists even if seed is disabled in production
         await ensureBaseTaxonomy();
-        // If after loading remote there is still no local data, seed demo data only in dev.
         const initialized = !!safeGetLocalStorage('stck_db_initialized');
         const hasLocal = getProducts().length > 0 || initialized;
         if (!hasLocal && import.meta.env.DEV) seedDatabase();
       } else {
         await ensureBaseTaxonomy();
-        // Offline/local dev: run seed only in development environment
         if (import.meta.env.DEV) seedDatabase();
       }
 
-      initSession();
       setAppReady(true);
-    })();
+    })().catch((error) => {
+      console.error('[APP INIT ERROR]', error);
+      setAppReady(true);
+    });
   }, []);
 
   if (!appReady) {

@@ -33,9 +33,9 @@ interface AppState {
   loading: boolean;
 
   // Auth actions
-  login: (email: string, password: string) => { success: boolean; error?: string };
-  logout: () => void;
-  initSession: () => void;
+  login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  logout: () => Promise<void>;
+  initSession: () => Promise<void>;
 
   // Data actions
   loadData: () => void;
@@ -86,8 +86,8 @@ export const useStore = create<AppState>()(
     currentPage: 1,
     loading: false,
 
-    initSession: () => {
-      const { user, token } = getSession();
+    initSession: async () => {
+      const { user, token } = await getSession();
       set(state => {
         state.user = user;
         state.token = token;
@@ -96,8 +96,8 @@ export const useStore = create<AppState>()(
       if (user) get().loadData();
     },
 
-    login: (email, password) => {
-      const result = authLogin(email, password);
+    login: async (email, password) => {
+      const result = await authLogin(email, password);
       if (result.success && result.user && result.token) {
         set(state => {
           state.user = result.user!;
@@ -109,8 +109,8 @@ export const useStore = create<AppState>()(
       return { success: result.success, error: result.error };
     },
 
-    logout: () => {
-      authLogout();
+    logout: async () => {
+      await authLogout();
       set(state => {
         state.user = null;
         state.token = null;

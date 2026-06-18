@@ -1,9 +1,10 @@
-Ôªøimport { useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import { format, parseISO } from 'date-fns';
 import { Banknote, CreditCard, DollarSign, Minus, Plus, QrCode, Search, ShoppingBag, Trash2 } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { getAlerts, getMovements, getProducts, registerSale } from '../lib/database';
+import { CATALOG_STOCK_SYNC_WARNING, shouldSyncCatalogStock, syncCatalogStockAfterSale } from '../lib/catalogStockSync';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 
@@ -27,6 +28,11 @@ function formatBRL(value: any): string {
   return safeNumber(value, 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
+function displayCustomerName(value: any): string {
+  const name = String(value || '').trim();
+  return name || 'Cliente n„o informado';
+}
+
 type CartItem = {
   cartItemId: string;
   productId: string;
@@ -48,6 +54,7 @@ export function CashierPage() {
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<'card' | 'pix' | 'cash'>('card');
+  const [customerName, setCustomerName] = useState('');
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [selectedVariantsByProduct, setSelectedVariantsByProduct] = useState<Record<string, string | undefined>>({});
 
@@ -124,14 +131,14 @@ export function CashierPage() {
     const variant = getSelectedVariantForProduct(product);
     const stockAvailable = safeNumber(variant?.quantity ?? product.totalQuantity, 0);
     if (stockAvailable <= 0) {
-      toast.error('Produto sem estoque dispon√≠vel');
+      toast.error('Produto sem estoque disponÌvel');
       return;
     }
     const nextVariantId = variant?.id;
     const cartItemId = `${product.id}:${nextVariantId || 'default'}`;
     const unitPrice = safeNumber(variant?.salePrice ?? product.salePrice, 0);
     const unitCost = safeNumber(variant?.costPrice ?? product.costPrice, 0);
-    const variantName = variant ? [variant.size, variant.color].filter(Boolean).join(' ¬∑ ') : 'Produto padr√£o';
+    const variantName = variant ? [variant.size, variant.color].filter(Boolean).join(' ∑ ') : 'Produto padr„o';
 
     setProductId(product.id);
     setVariantId(nextVariantId);
@@ -140,7 +147,7 @@ export function CashierPage() {
       const existing = currentItems.find(item => item.cartItemId === cartItemId);
       if (existing) {
         if (existing.quantity >= existing.stockAvailable) {
-          toast.error('Quantidade maior que o estoque dispon√≠vel');
+          toast.error('Quantidade maior que o estoque disponÌvel');
           return currentItems;
         }
         return currentItems.map(item => item.cartItemId === cartItemId ? { ...item, quantity: item.quantity + 1 } : item);
@@ -168,6 +175,7 @@ export function CashierPage() {
     setProductId('');
     setVariantId(undefined);
     setQuantity(1);
+    setCustomerName('');
   };
 
   const updateCartItemQuantity = (cartItemId: string, nextQuantity: number) => {
@@ -176,7 +184,7 @@ export function CashierPage() {
       if (!item) return currentItems;
       if (nextQuantity <= 0) return currentItems.filter(cartItem => cartItem.cartItemId !== cartItemId);
       if (nextQuantity > item.stockAvailable) {
-        toast.error('Quantidade maior que o estoque dispon√≠vel');
+        toast.error('Quantidade maior que o estoque disponÌvel');
         return currentItems;
       }
       return currentItems.map(cartItem => cartItem.cartItemId === cartItemId ? { ...cartItem, quantity: nextQuantity } : cartItem);
@@ -199,9 +207,11 @@ export function CashierPage() {
     if (cartItems.length === 0) return toast.error('Adicione pelo menos um produto ao carrinho');
     setLoading(true);
     try {
+      let catalogSyncFailed = false;
+      const saleCustomerName = customerName.trim();
       for (const item of cartItems) {
         const currentProduct = getProducts().find(product => product.id === item.productId) || products.find(product => product.id === item.productId);
-        if (!currentProduct) throw new Error(`Produto n√£o encontrado: ${item.productName}`);
+        if (!currentProduct) throw new Error(`Produto n„o encontrado: ${item.productName}`);
 
         const currentVariant = item.variantId ? currentProduct.variants.find(variant => variant.id === item.variantId) : undefined;
         const availableStock = safeNumber(currentVariant?.quantity ?? currentProduct.totalQuantity, 0);
@@ -209,10 +219,10 @@ export function CashierPage() {
         const unitPrice = safeNumber(currentVariant?.salePrice ?? currentProduct.salePrice ?? item.unitPrice, 0);
         const unitCost = safeNumber(currentVariant?.costPrice ?? currentProduct.costPrice ?? item.unitCost, 0);
 
-        if (itemQuantity <= 0) throw new Error(`Quantidade inv√°lida: ${item.productName}`);
+        if (itemQuantity <= 0) throw new Error(`Quantidade inv·lida: ${item.productName}`);
         if (itemQuantity > availableStock) throw new Error(`Estoque insuficiente: ${item.productName}`);
-        if (unitPrice <= 0) throw new Error(`Pre√ßo de venda inv√°lido: ${item.productName}`);
-        if (unitCost < 0) throw new Error(`Custo inv√°lido: ${item.productName}`);
+        if (unitPrice <= 0) throw new Error(`PreÁo de venda inv·lido: ${item.productName}`);
+        if (unitCost < 0) throw new Error(`Custo inv·lido: ${item.productName}`);
 
         const saved = await registerSale({
           productId: item.productId,
@@ -221,12 +231,26 @@ export function CashierPage() {
           userId: user?.id,
           reason: 'Venda',
           notes: '',
+          customerName: saleCustomerName,
         });
 
         if (!saved) throw new Error(`Falha ao registrar venda: ${item.productName}`);
+
+        if (shouldSyncCatalogStock(currentProduct)) {
+          try {
+            await syncCatalogStockAfterSale(currentProduct, currentVariant, itemQuantity, saved);
+          } catch (syncError) {
+            catalogSyncFailed = true;
+            console.error('[CATALOG STOCK SYNC ERROR]', syncError);
+          }
+        }
       }
 
-      toast.success('Venda registrada');
+      if (catalogSyncFailed) {
+        toast.error(CATALOG_STOCK_SYNC_WARNING);
+      } else {
+        toast.success('Venda registrada');
+      }
       clearSale();
       useStore.setState({
         products: getProducts(),
@@ -235,14 +259,14 @@ export function CashierPage() {
       });
     } catch (err: any) {
       console.error('Erro ao registrar venda', { cartItems, err });
-      toast.error(err?.message || 'N√£o foi poss√≠vel registrar a venda no banco de dados.');
+      toast.error(err?.message || 'N„o foi possÌvel registrar a venda no banco de dados.');
     } finally {
       setLoading(false);
     }
   };
 
   const paymentOptions = [
-    { id: 'card' as const, label: 'Cart√£o', icon: <CreditCard size={16} /> },
+    { id: 'card' as const, label: 'Cart„o', icon: <CreditCard size={16} /> },
     { id: 'pix' as const, label: 'Pix', icon: <QrCode size={16} /> },
     { id: 'cash' as const, label: 'Dinheiro', icon: <Banknote size={16} /> },
   ];
@@ -254,7 +278,7 @@ export function CashierPage() {
           {[
             { label: 'Vendas Hoje', value: formatBRL(totals.total), icon: <DollarSign size={18} />, accent: 'from-violet-500 to-fuchsia-500', width: 'w-4/5' },
             { label: 'Lucro Hoje', value: formatBRL(totals.profit), icon: <ShoppingBag size={18} />, accent: 'from-emerald-400 to-teal-500', width: 'w-3/5' },
-            { label: 'Ticket M√©dio', value: formatBRL(totals.transactions > 0 ? (totals.total / totals.transactions) : 0), icon: <CreditCard size={18} />, accent: 'from-sky-400 to-indigo-500', width: 'w-2/5' },
+            { label: 'Ticket MÈdio', value: formatBRL(totals.transactions > 0 ? (totals.total / totals.transactions) : 0), icon: <CreditCard size={18} />, accent: 'from-sky-400 to-indigo-500', width: 'w-2/5' },
           ].map(metric => (
             <Card key={metric.label} className="overflow-hidden border border-white/10 bg-white/[0.045] p-5 shadow-2xl shadow-black/20 backdrop-blur-xl">
               <div className="flex items-center justify-between">
@@ -301,7 +325,7 @@ export function CashierPage() {
                         </div>
                         <div className="mt-3 space-y-1">
                           <p className="line-clamp-1 text-sm font-semibold text-white">{product.name}</p>
-                          <p className="line-clamp-1 text-xs text-white/40">{selectedCardVariant ? `${selectedCardVariant.size} ¬∑ ${selectedCardVariant.color}` : product.brand?.name || 'Produto padr√£o'}</p>
+                          <p className="line-clamp-1 text-xs text-white/40">{selectedCardVariant ? `${selectedCardVariant.size} ∑ ${selectedCardVariant.color}` : product.brand?.name || 'Produto padr„o'}</p>
                           <div className="flex items-center justify-between pt-2">
                             <span className="text-sm font-bold text-violet-200">{formatBRL(displayPrice)}</span>
                             <span className="rounded-full bg-white/[0.06] px-2 py-1 text-[11px] text-white/40">{stock} un.</span>
@@ -315,7 +339,7 @@ export function CashierPage() {
                             const selected = (selectedVariantId || availableVariants[0]?.id) === variant.id;
                             return (
                               <button key={variant.id} type="button" disabled={disabled} onClick={() => setSelectedVariantsByProduct(current => ({ ...current, [product.id]: variant.id }))} className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold transition ${selected ? 'border-violet-300/70 bg-violet-500/20 text-white' : 'border-white/10 bg-white/[0.035] text-white/45 hover:bg-white/[0.07]'} ${disabled ? 'cursor-not-allowed opacity-35' : ''}`}>
-                                {[variant.size, variant.color].filter(Boolean).join(' ¬∑ ') || 'Padr√£o'}
+                                {[variant.size, variant.color].filter(Boolean).join(' ∑ ') || 'Padr„o'}
                               </button>
                             );
                           })}
@@ -324,7 +348,7 @@ export function CashierPage() {
                     </div>
                   );
                 })}
-                {productCards.length === 0 && <div className="col-span-full rounded-2xl border border-dashed border-white/10 bg-white/[0.02] p-8 text-center text-sm text-white/35">Nenhum produto dispon√≠vel para venda.</div>}
+                {productCards.length === 0 && <div className="col-span-full rounded-2xl border border-dashed border-white/10 bg-white/[0.02] p-8 text-center text-sm text-white/35">Nenhum produto disponÌvel para venda.</div>}
               </div>
             </div>
           </Card>
@@ -374,6 +398,15 @@ export function CashierPage() {
                   <span className="text-xs font-semibold uppercase tracking-[0.16em] text-white/40">Valor total</span>
                   <span className="text-2xl font-bold text-white">{formatBRL(cartTotals.totalAmount)}</span>
                 </div>
+                <label className="mb-4 block">
+                  <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.16em] text-white/40">Cliente</span>
+                  <input
+                    value={customerName}
+                    onChange={e => setCustomerName(e.target.value)}
+                    placeholder="Nome do cliente"
+                    className="w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2.5 text-sm text-white outline-none transition placeholder:text-white/25 focus:border-violet-400/60 focus:bg-white/[0.06]"
+                  />
+                </label>
                 <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-white/40">Pagamento</p>
                 <div className="grid grid-cols-3 gap-2">
                   {paymentOptions.map(option => <button key={option.id} type="button" onClick={() => setPaymentMethod(option.id)} className={`flex items-center justify-center gap-1.5 rounded-xl border px-2 py-2.5 text-xs font-semibold transition ${paymentMethod === option.id ? 'border-violet-400/70 bg-violet-500/20 text-white' : 'border-white/10 bg-white/[0.03] text-white/45 hover:bg-white/[0.06]'}`}>{option.icon}{option.label}</button>)}
@@ -388,7 +421,7 @@ export function CashierPage() {
         <Card className="border border-white/10 bg-white/[0.035] p-5 backdrop-blur-xl">
           <div className="mb-4 flex items-center justify-between">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-violet-300/70">Hist√≥rico</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-violet-300/70">HistÛrico</p>
               <h3 className="text-lg font-semibold text-white">Vendas de hoje</h3>
             </div>
             <p className="text-xs text-white/35">{todaysSales.length} registros</p>
@@ -403,11 +436,11 @@ export function CashierPage() {
                 return (
                   <div key={sale.id} className="grid grid-cols-[0.8fr_1.4fr_1fr_0.8fr_1fr_48px] items-center gap-3 px-4 py-3 text-sm text-white/70">
                     <span className="text-white/45">{format(new Date(sale.createdAt), 'HH:mm')}</span>
-                    <span className="truncate">Balc√£o</span>
+                    <span className="truncate">{displayCustomerName(sale.customerName ?? sale.customer_name)}</span>
                     <span className="font-semibold text-white">{formatBRL(values.totalAmount)}</span>
                     <span>{values.qty}</span>
-                    <span><span className="rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-semibold text-emerald-300">CONCLU√çDO</span></span>
-                    <button type="button" className="flex h-9 w-9 items-center justify-center rounded-xl text-red-300 transition hover:bg-red-500/15" onClick={async () => { try { const removed = await removeMovement(sale.id); if (removed) toast.success('Movimenta√ß√£o removida'); } catch (error) { console.error('[SUPABASE MOVEMENT DELETE ERROR]', error); toast.error('N√£o foi poss√≠vel remover a movimenta√ß√£o no banco de dados.'); } }}><Trash2 size={15} /></button>
+                    <span><span className="rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-semibold text-emerald-300">CONCLUÕDO</span></span>
+                    <button type="button" className="flex h-9 w-9 items-center justify-center rounded-xl text-red-300 transition hover:bg-red-500/15" onClick={async () => { try { const removed = await removeMovement(sale.id); if (removed) toast.success('MovimentaÁ„o removida'); } catch (error) { console.error('[SUPABASE MOVEMENT DELETE ERROR]', error); toast.error('N„o foi possÌvel remover a movimentaÁ„o no banco de dados.'); } }}><Trash2 size={15} /></button>
                   </div>
                 );
               })}
@@ -421,5 +454,6 @@ export function CashierPage() {
 }
 
 export default CashierPage;
+
 
 
