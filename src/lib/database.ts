@@ -1,5 +1,6 @@
 import { Product, StockMovement, Brand, Category, Alert, StoreConfig } from '../types';
 import { supabase, isSupabaseConfigured } from './supabase';
+import { shouldSyncCatalogStock, syncCatalogStockAfterRestore } from './catalogStockSync';
 
 // Database keys
 const PRODUCTS_KEY = 'stck_products';
@@ -161,6 +162,13 @@ export function getMovements(): StockMovement[] {
     return parsed.map((movement: any) => ({
       ...movement,
       customerName: movement.customerName ?? movement.customer_name ?? '',
+      variantLabel: movement.variantLabel ?? movement.variant_label ?? movement.variantName ?? movement.variant_name ?? '',
+      size: movement.size ?? movement.variant?.size ?? '',
+      color: movement.color ?? movement.variant?.color ?? '',
+      paymentStatus: movement.paymentStatus ?? movement.payment_status ?? 'paid',
+      paymentMethod: movement.paymentMethod ?? movement.payment_method ?? '',
+      paidAt: movement.paidAt ?? movement.paid_at ?? null,
+      saleGroupId: movement.saleGroupId ?? movement.sale_group_id ?? '',
     }));
   } catch { return []; }
 }
@@ -375,6 +383,22 @@ export async function deleteMovement(id: string): Promise<boolean> {
     products[productIndex] = updatedProduct;
     saveProducts(products);
     checkStockAlerts(updatedProduct);
+    if (shouldSyncCatalogStock(updatedProduct)) {
+      try {
+        await syncCatalogStockAfterRestore(updatedProduct, movement);
+      } catch (error: any) {
+        console.error('[CATALOG STOCK SYNC ERROR]', {
+          action: 'restore',
+          productId: updatedProduct.id,
+          productName: updatedProduct.name,
+          variantId: movement.variantId || null,
+          size: movement.size || movement.variant?.size || null,
+          color: movement.color || movement.variant?.color || null,
+          message: error?.message || error,
+          details: error?.details || null,
+        });
+      }
+    }
   }
 
   const filtered = movements.filter(m => m.id !== id);
@@ -465,8 +489,10 @@ export function productFromSupabase(row: any): Product {
 
 export function movementToSupabase(m: any): any {
   const totals = getMovementTotals(m);
-  const variantName = m.variantName || m.variant_name || (m.variant ? [m.variant.size, m.variant.color].filter(Boolean).join(' ') : null);
+  const variantName = m.variantName || m.variant_name || m.variantLabel || m.variant_label || (m.variant ? [m.variant.size, m.variant.color].filter(Boolean).join(' ') : null);
+  const variantLabel = m.variantLabel || m.variant_label || variantName || null;
   const customerName = String(m.customerName ?? m.customer_name ?? '').trim();
+  const paymentStatus = m.paymentStatus || m.payment_status || 'paid';
   return {
     id: m.id,
     type: m.type || 'exit',
@@ -475,6 +501,13 @@ export function movementToSupabase(m: any): any {
     customer_name: customerName || null,
     variant_id: m.variantId || m.variant_id || null,
     variant_name: variantName || null,
+    size: m.size || m.variant?.size || null,
+    color: m.color || m.variant?.color || null,
+    variant_label: variantLabel || null,
+    payment_status: paymentStatus,
+    payment_method: m.paymentMethod ?? m.payment_method ?? null,
+    paid_at: m.paidAt ?? m.paid_at ?? (paymentStatus === 'paid' ? (m.createdAt || m.created_at || new Date().toISOString()) : null),
+    sale_group_id: m.saleGroupId || m.sale_group_id || null,
     quantity: totals.quantity,
     unit_price: totals.unitPrice,
     unit_cost: totals.unitCost,
@@ -510,8 +543,13 @@ export function movementFromSupabase(row: any): StockMovement {
     subcategory: row.subcategory_name,
     variantId: row.variant_id,
     variantName: row.variant_name,
-    size: row.size,
-    color: row.color,
+    variantLabel: row.variant_label || row.variant_name || '',
+    size: row.size || '',
+    color: row.color || '',
+    paymentStatus: row.payment_status || 'paid',
+    paymentMethod: row.payment_method || '',
+    paidAt: row.paid_at || null,
+    saleGroupId: row.sale_group_id || '',
     quantity: totals.quantity,
     unitPrice: totals.unitPrice,
     costPrice: totals.unitCost,
@@ -690,6 +728,25 @@ async function upsertMovementToSupabase(movement: StockMovement): Promise<void> 
   if (error) throw error;
 }
 
+export async function updateMovementPaymentStatusInSupabase(
+  movementId: string,
+  status: StockMovement['paymentStatus'],
+  paymentMethod: string,
+  paidAt: string
+): Promise<void> {
+  if (!isSupabaseConfigured || !supabase) return;
+  const { error } = await supabase
+    .from('movements')
+    .update({
+      payment_status: status,
+      payment_method: paymentMethod || null,
+      paid_at: paidAt,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', movementId);
+  if (error) throw error;
+}
+
 async function upsertProductToSupabase(product: Product): Promise<void> {
   if (!isSupabaseConfigured || !supabase) return;
   const { error } = await supabase.from('products').upsert([productToSupabase(product)]);
@@ -732,15 +789,33 @@ export async function registerSale(params: {
   reason?: string;
   notes?: string;
   customerName?: string;
+  paymentStatus?: 'paid' | 'pending';
+  paymentMethod?: string | null;
+  saleGroupId?: string;
 }): Promise<StockMovement | null> {
-  const { productId, variantId, quantity, userId, reason = 'Venda', notes = '', customerName = '' } = params;
+  const {
+    productId,
+    variantId,
+    quantity,
+    userId,
+    reason = 'Venda',
+    notes = '',
+    customerName = '',
+    paymentStatus = 'paid',
+    paymentMethod = null,
+    saleGroupId,
+  } = params;
   if (!productId) throw new Error('productId required');
   if (!quantity || Number(quantity) <= 0) throw new Error('quantity must be > 0');
+  if (paymentStatus === 'pending' && !customerName.trim()) {
+    throw new Error('Informe o nome do cliente para registrar uma venda pendente.');
+  }
 
   const localProduct = getProductById(productId);
   if (!localProduct) throw new Error('Produto nao encontrado');
 
   const localVariant = variantId ? (localProduct.variants || []).find(v => v.id === variantId) : undefined;
+  const variantLabel = localVariant ? [localVariant.size, localVariant.color, localProduct.name].filter(Boolean).join(' - ') : '';
   const availableStock = localVariant ? Number(localVariant.quantity || 0) : Number(localProduct.totalQuantity || 0);
   if (quantity > availableStock) throw new Error('Quantidade maior que o estoque disponivel');
 
@@ -756,6 +831,13 @@ export async function registerSale(params: {
       reason,
       notes,
       customerName: customerName.trim(),
+      size: localVariant?.size || '',
+      color: localVariant?.color || '',
+      variantLabel,
+      paymentStatus,
+      paymentMethod: paymentStatus === 'paid' ? (paymentMethod || '') : '',
+      paidAt: paymentStatus === 'paid' ? new Date().toISOString() : null,
+      saleGroupId: saleGroupId || generateId('sale'),
       userId: userId || 'system',
     } as any);
   } finally {
@@ -787,6 +869,36 @@ export async function registerSale(params: {
 
   return created;
 }
+
+export async function markMovementAsPaid(
+  movementId: string,
+  paymentMethod: string
+): Promise<StockMovement> {
+  const movements = getMovements();
+  const index = movements.findIndex(m => m.id === movementId);
+  if (index === -1) throw new Error('Movimentação não encontrada.');
+
+  const current = movements[index];
+  if ((current.paymentStatus || 'paid') !== 'pending') {
+    throw new Error('Somente vendas pendentes podem ser marcadas como pagas.');
+  }
+
+  const paidAt = new Date().toISOString();
+  const updated: StockMovement = {
+    ...current,
+    paymentStatus: 'paid',
+    paymentMethod,
+    paidAt,
+  };
+
+  if (isSupabaseConfigured && supabase) {
+    await updateMovementPaymentStatusInSupabase(movementId, 'paid', paymentMethod, paidAt);
+  }
+
+  movements[index] = updated;
+  saveMovements(movements);
+  return updated;
+}
 // Movement operations
 export function createMovement(data: Omit<StockMovement, 'id' | 'createdAt' | 'previousQuantity' | 'newQuantity'>): StockMovement | null {
   try {
@@ -805,9 +917,11 @@ export function createMovement(data: Omit<StockMovement, 'id' | 'createdAt' | 'p
     // determine pricing info
     let unitPrice = safeNumber(product.salePrice, 0);
     let unitCost = safeNumber(product.costPrice, 0);
+  let selectedVariant: Product['variants'][number] | undefined;
   if (data.variantId) {
     const variant = product.variants.find(v => v.id === data.variantId);
     if (variant) {
+      selectedVariant = variant;
       unitPrice = safeNumber(variant.salePrice, unitPrice);
       unitCost = safeNumber((variant as any).costPrice ?? (variant as any).cost, unitCost);
     }
@@ -827,6 +941,7 @@ export function createMovement(data: Omit<StockMovement, 'id' | 'createdAt' | 'p
         return null;
       }
       const variant = product.variants[variantIndex];
+      selectedVariant = variant;
       previousQuantity = Number(variant.quantity) || 0;
       // pricing from variant if present
       unitPrice = safeNumber(variant.salePrice, unitPrice);
@@ -903,6 +1018,13 @@ export function createMovement(data: Omit<StockMovement, 'id' | 'createdAt' | 'p
       productName: product.name,
       product: product,
       variant: data.variantId ? product.variants.find(v => v.id === data.variantId) : undefined,
+      size: (data as any).size ?? selectedVariant?.size ?? '',
+      color: (data as any).color ?? selectedVariant?.color ?? '',
+      variantLabel: (data as any).variantLabel ?? (selectedVariant ? [selectedVariant.size, selectedVariant.color, product.name].filter(Boolean).join(' - ') : ''),
+      paymentStatus: (data as any).paymentStatus ?? 'paid',
+      paymentMethod: (data as any).paymentMethod ?? '',
+      paidAt: (data as any).paidAt ?? ((data as any).paymentStatus === 'pending' ? null : new Date().toISOString()),
+      saleGroupId: (data as any).saleGroupId ?? '',
     };
 
   const movements = getMovements();

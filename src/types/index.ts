@@ -82,7 +82,10 @@ export interface StockMovement {
   product?: Product;
   variantId?: string;
   variantName?: string;
+  variantLabel?: string;
   variant?: ProductVariant;
+  size?: string;
+  color?: string;
   type: MovementType;
   quantity: number;
   previousQuantity: number;
@@ -101,6 +104,10 @@ export interface StockMovement {
   // Snapshot of product name to avoid lookup later
   productName?: string;
   customerName?: string;
+  paymentStatus?: 'paid' | 'pending' | 'cancelled';
+  paymentMethod?: string;
+  paidAt?: string | null;
+  saleGroupId?: string;
   reason: string;
   notes?: string;
   userId: string;

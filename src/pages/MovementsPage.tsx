@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import {
   Plus, ArrowUpRight, ArrowDownRight, Activity,
-  ArrowLeftRight, Trash2
+  ArrowLeftRight, CheckCircle2, Trash2
 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { useStore } from '../store/useStore';
@@ -24,7 +24,25 @@ function safeNumber(value: any, fallback = 0): number {
 
 function displayCustomerName(value: any): string {
   const name = String(value || '').trim();
-  return name || 'Cliente n�o informado';
+  return name || 'Cliente nao informado';
+}
+
+function displayMovementField(value: any): string {
+  const text = String(value || '').trim();
+  return text || 'Nao informado';
+}
+
+function getPaymentStatus(movement: StockMovement): 'paid' | 'pending' | 'cancelled' {
+  return movement.paymentStatus || 'paid';
+}
+
+function getVariantLabel(movement: StockMovement): string {
+  return displayMovementField(
+    movement.variantLabel ||
+    (movement as any).variant_label ||
+    movement.variantName ||
+    (movement.variant ? [movement.variant.size, movement.variant.color].filter(Boolean).join(' - ') : '')
+  );
 }
 
 const movementTypeConfig = {
@@ -36,10 +54,13 @@ const movementTypeConfig = {
 };
 
 export function MovementsPage() {
-  const { products, movements, addMovement, user, currentPage, setCurrentPage } = useStore();
+  const { products, movements, addMovement, markMovementPaid, user, currentPage, setCurrentPage } = useStore();
 
   const [showModal, setShowModal] = useState(false);
+  const [paymentModalMovement, setPaymentModalMovement] = useState<StockMovement | null>(null);
+  const [paymentMethod, setPaymentMethod] = useState<'Pix' | 'Cartao' | 'Dinheiro'>('Pix');
   const [loading, setLoading] = useState(false);
+  const [paymentLoading, setPaymentLoading] = useState(false);
   const [typeFilter, setTypeFilter] = useState('');
   const [productFilter, setProductFilter] = useState('');
 
@@ -128,9 +149,11 @@ export function MovementsPage() {
         <div>
           <p className="text-sm text-white/80 font-medium">{m.product?.name || m.productName || 'Produto nao encontrado'}</p>
           <p className="text-xs text-white/35">Cliente: {displayCustomerName(m.customerName ?? (m as any).customer_name)}</p>
-          {m.variant && (
-            <p className="text-xs text-white/30">{m.variant.size} · {m.variant.color}</p>
-          )}
+          <div className="mt-1 space-y-0.5 text-xs text-white/30">
+            <p>Tamanho: {displayMovementField(m.size || m.variant?.size)}</p>
+            <p>Cor: {displayMovementField(m.color || m.variant?.color)}</p>
+            <p>Variacao: {getVariantLabel(m)}</p>
+          </div>
         </div>
       ),
     },
@@ -163,6 +186,21 @@ export function MovementsPage() {
       ),
     },
     {
+      key: 'payment',
+      header: 'Pagamento',
+      render: (m: StockMovement) => {
+        const status = getPaymentStatus(m);
+        return (
+          <div className="space-y-1">
+            <Badge variant={status === 'pending' ? 'warning' : status === 'cancelled' ? 'danger' : 'success'} size="sm">
+              {status === 'pending' ? 'PENDENTE' : status === 'cancelled' ? 'CANCELADO' : 'PAGO'}
+            </Badge>
+            <p className="text-xs text-white/30">{displayMovementField(m.paymentMethod || (m as any).payment_method)}</p>
+          </div>
+        );
+      },
+    },
+    {
       key: 'date',
       header: 'Data',
       render: (m: StockMovement) => (
@@ -179,27 +217,60 @@ export function MovementsPage() {
     {
       key: 'actions',
       header: '',
-      render: (m: StockMovement) => (
-        <button
-          onClick={async () => {
-            if (confirm('Tem certeza que deseja excluir esta movimentação?')) {
-              try {
-                const removed = await useStore.getState().removeMovement(m.id);
-                if (removed) toast.success('Movimentação excluída com sucesso!');
-              } catch (error) {
-                console.error('[SUPABASE MOVEMENT DELETE ERROR]', error);
-                toast.error('Não foi possível excluir a movimentação no banco de dados.');
-              }
-            }
-          }}
-          className="p-2 hover:bg-red-500/20 rounded-lg text-red-400 hover:text-red-300 transition-colors"
-          title="Excluir movimentação"
-        >
-          <Trash2 size={16} />
-        </button>
-      ),
+      render: (m: StockMovement) => {
+        const status = getPaymentStatus(m);
+        return (
+          <div className="flex items-center justify-end gap-2">
+            {status === 'pending' && (
+              <button
+                onClick={() => {
+                  setPaymentMethod('Pix');
+                  setPaymentModalMovement(m);
+                }}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-2 text-xs font-semibold text-emerald-300 transition-colors hover:bg-emerald-500/20"
+                title="Marcar como pago"
+              >
+                <CheckCircle2 size={14} />
+                Marcar como pago
+              </button>
+            )}
+            <button
+              onClick={async () => {
+                if (confirm('Tem certeza que deseja excluir esta movimenta?o?')) {
+                  try {
+                    const removed = await useStore.getState().removeMovement(m.id);
+                    if (removed) toast.success('Movimentacao excluida com sucesso!');
+                  } catch (error) {
+                    console.error('[SUPABASE MOVEMENT DELETE ERROR]', error);
+                    toast.error('Nao foi possivel excluir a movimenta?o no banco de dados.');
+                  }
+                }
+              }}
+              className="p-2 hover:bg-red-500/20 rounded-lg text-red-400 hover:text-red-300 transition-colors"
+              title="Excluir movimenta?o"
+            >
+              <Trash2 size={16} />
+            </button>
+          </div>
+        );
+      },
     },
   ];
+
+  const handleConfirmPayment = async () => {
+    if (!paymentModalMovement) return;
+    setPaymentLoading(true);
+    try {
+      await markMovementPaid(paymentModalMovement.id, paymentMethod);
+      toast.success('Venda marcada como paga!');
+      setPaymentModalMovement(null);
+    } catch (error: any) {
+      console.error('[SUPABASE MOVEMENT PAYMENT UPDATE ERROR]', error);
+      toast.error(error?.message || 'Nao foi possivel marcar a venda como paga.');
+    } finally {
+      setPaymentLoading(false);
+    }
+  };
 
   // Summary stats
   const stats = useMemo(() => {
@@ -290,6 +361,42 @@ export function MovementsPage() {
           />
         )}
       </motion.div>
+
+      <Modal
+        open={!!paymentModalMovement}
+        onClose={() => setPaymentModalMovement(null)}
+        title="Marcar como pago"
+        subtitle="Escolha a forma de pagamento para atualizar a venda pendente"
+        size="sm"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setPaymentModalMovement(null)}>Cancelar</Button>
+            <Button variant="primary" loading={paymentLoading} onClick={handleConfirmPayment}>
+              Confirmar pagamento
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <Select
+            label="Forma de pagamento"
+            value={paymentMethod}
+            onChange={e => setPaymentMethod(e.target.value as 'Pix' | 'Cartao' | 'Dinheiro')}
+            options={[
+              { value: 'Pix', label: 'Pix' },
+              { value: 'Cartao', label: 'Cartao' },
+              { value: 'Dinheiro', label: 'Dinheiro' },
+            ]}
+          />
+          {paymentModalMovement && (
+            <div className="rounded-xl border border-white/[0.06] bg-white/[0.03] p-3 text-sm text-white/60">
+              <p className="font-medium text-white/80">{paymentModalMovement.product?.name || paymentModalMovement.productName || paymentModalMovement.productId}</p>
+              <p className="mt-1 text-xs text-white/35">Cliente: {displayCustomerName(paymentModalMovement.customerName)}</p>
+              <p className="text-xs text-white/35">Variacao: {getVariantLabel(paymentModalMovement)}</p>
+            </div>
+          )}
+        </div>
+      </Modal>
 
       {/* Modal */}
       <Modal

@@ -100,6 +100,11 @@ create table if not exists movements (
   variant_name text,
   size text,
   color text,
+  variant_label text,
+  payment_status text default 'paid',
+  payment_method text,
+  paid_at timestamptz,
+  sale_group_id text,
   quantity integer not null default 0,
   unit_price numeric not null default 0,
   unit_cost numeric not null default 0,
@@ -129,6 +134,11 @@ alter table movements add column if not exists variant_id text;
 alter table movements add column if not exists variant_name text;
 alter table movements add column if not exists size text;
 alter table movements add column if not exists color text;
+alter table movements add column if not exists variant_label text;
+alter table movements add column if not exists payment_status text default 'paid';
+alter table movements add column if not exists payment_method text;
+alter table movements add column if not exists paid_at timestamptz;
+alter table movements add column if not exists sale_group_id text;
 alter table movements add column if not exists quantity integer not null default 0;
 alter table movements add column if not exists unit_price numeric not null default 0;
 alter table movements add column if not exists unit_cost numeric not null default 0;
@@ -148,6 +158,8 @@ alter table movements add column if not exists date timestamptz not null default
 create unique index if not exists movements_id_uidx on movements (id);
 create index if not exists movements_product_id_idx on movements (product_id);
 create index if not exists movements_created_at_idx on movements (created_at desc);
+create index if not exists movements_payment_status_idx on movements (payment_status);
+create index if not exists movements_sale_group_id_idx on movements (sale_group_id);
 
 update movements
 set
@@ -158,6 +170,7 @@ set
   total_cost = coalesce(total_cost, coalesce(unit_cost, cost_price, 0) * coalesce(quantity, 0), 0),
   total_profit = coalesce(total_profit, profit, coalesce(total_amount, total_value, 0) - coalesce(total_cost, 0), 0),
   cost_price = coalesce(cost_price, unit_cost, 0),
+  payment_status = coalesce(payment_status, 'paid'),
   updated_at = coalesce(updated_at, now())
 where
   quantity is null
@@ -167,6 +180,7 @@ where
   or total_cost is null
   or total_profit is null
   or cost_price is null
+  or payment_status is null
   or updated_at is null;
 
 update movements

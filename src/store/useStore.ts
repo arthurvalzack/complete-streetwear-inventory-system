@@ -7,7 +7,7 @@ import { getSession, login as authLogin, logout as authLogout } from '../lib/aut
 import {
   getProducts, getBrands, getCategories, getMovements, getAlerts,
   createProduct, updateProduct, deleteProduct,
-  createMovement, deleteMovement, markAlertRead, markAllAlertsRead,
+  createMovement, deleteMovement, markMovementAsPaid, markAlertRead, markAllAlertsRead,
   getStoreConfig, updateStoreConfig, loadRemoteToLocal
 } from '../lib/database';
 
@@ -44,6 +44,7 @@ interface AppState {
   removeProduct: (id: string) => void;
   addMovement: (data: Omit<StockMovement, 'id' | 'createdAt' | 'previousQuantity' | 'newQuantity'>) => StockMovement | null;
   removeMovement: (id: string) => Promise<boolean>;
+  markMovementPaid: (id: string, paymentMethod: string) => Promise<StockMovement>;
   readAlert: (id: string) => void;
   readAllAlerts: () => void;
   updateStoreConfig: (data: Partial<StoreConfig>) => void;
@@ -209,6 +210,15 @@ export const useStore = create<AppState>()(
         });
       }
       return removed;
+    },
+
+    markMovementPaid: async (id, paymentMethod) => {
+      const updated = await markMovementAsPaid(id, paymentMethod);
+      set(state => {
+        const index = state.movements.findIndex(m => m.id === id);
+        if (index !== -1) state.movements[index] = updated;
+      });
+      return updated;
     },
 
     readAlert: (id) => {
