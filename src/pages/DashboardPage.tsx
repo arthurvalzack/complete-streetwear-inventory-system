@@ -71,7 +71,7 @@ const movementTypeBadge: Record<string, 'success' | 'danger' | 'warning' | 'info
 };
 
 export function DashboardPage() {
-  const { products, movements } = useStore();
+  const { products, movements, cashOutflows } = useStore();
 
   const stats = useMemo(() => {
     const totalProducts = products.length;
@@ -84,7 +84,7 @@ export function DashboardPage() {
     return { totalProducts, totalStock, lowStockProducts, outOfStockProducts, totalCostValue, totalSaleValue, activeProducts };
   }, [products]);
 
-  // Financial stats: Vendas do dia, Lucro do dia, Ticket médio
+  // Financial stats: paid sales only. Pending sales do not enter the balance.
   const financial = useMemo(() => {
     const today = format(new Date(), 'yyyy-MM-dd');
     const yesterday = format(subDays(new Date(), 1), 'yyyy-MM-dd');
@@ -98,7 +98,12 @@ export function DashboardPage() {
     };
 
     const calcForDate = (dateStr: string) => {
-      const dayMovs = movements.filter((m: any) => typeof m.createdAt === 'string' && m.createdAt.startsWith(dateStr) && isSale(m));
+      const dayMovs = movements.filter((m: any) => {
+        const status = m?.paymentStatus ?? m?.payment_status ?? 'paid';
+        const paidAt = m?.paidAt ?? m?.paid_at;
+        const financialDate = paidAt || m?.createdAt || m?.created_at;
+        return status === 'paid' && typeof financialDate === 'string' && financialDate.startsWith(dateStr) && isSale(m);
+      });
       let total = 0;
       let profit = 0;
       let transactions = 0;
@@ -121,6 +126,10 @@ export function DashboardPage() {
       : null;
 
     const ticket = todayVals.transactions > 0 ? safeNumber(todayVals.total / todayVals.transactions, 0) : 0;
+    const totalPaidSales = movements
+      .filter((m: any) => ((m?.paymentStatus ?? m?.payment_status ?? 'paid') === 'paid') && isSale(m))
+      .reduce((acc, m) => acc + movementTotals(m).totalAmount, 0);
+    const totalOutflows = cashOutflows.reduce((acc, outflow) => acc + safeNumber(outflow.amount, 0), 0);
 
     return {
       salesTotal: todayVals.total,
@@ -128,10 +137,11 @@ export function DashboardPage() {
       ticketAverage: ticket,
       salesTransactions: todayVals.transactions,
       salesItems: todayVals.itemsCount,
+      finalBalance: safeNumber(totalPaidSales - totalOutflows, 0),
       pctChange,
       hasHistory: yesterdayVals.transactions > 0 || yesterdayVals.itemsCount > 0 || (yesterdayVals.total > 0),
     };
-  }, [movements, products]);
+  }, [movements, cashOutflows]);
 
   // Movement chart data (last 7 days)
   const movementChartData = useMemo(() => {
@@ -181,7 +191,7 @@ export function DashboardPage() {
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-6">
       {/* Stats Grid */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <StatCard
           title="Total de Produtos"
           value={stats.totalProducts}
@@ -207,14 +217,6 @@ export function DashboardPage() {
           delay={0.1}
         />
         <StatCard
-          title="Esgotados"
-          value={stats.outOfStockProducts}
-          subtitle="sem estoque"
-          icon={<XCircle size={20} />}
-          color="red"
-          delay={0.15}
-        />
-        <StatCard
           title="Vendas do Dia"
           value={formatBRL(financial.salesTotal)}
           subtitle={
@@ -224,34 +226,18 @@ export function DashboardPage() {
           }
           icon={<DollarSign size={20} />}
           color="purple"
-          delay={0.2}
+          delay={0.15}
           trend={financial.pctChange !== null && financial.hasHistory ? { value: Number(financial.pctChange.toFixed(1)), label: 'em relação a ontem' } : undefined}
-        />
-        <StatCard
-          title="Lucro do Dia"
-          value={formatBRL(financial.profitTotal)}
-          subtitle="Lucro gerado hoje"
-          icon={<TrendingUp size={20} />}
-          color="emerald"
-          delay={0.25}
-        />
-        <StatCard
-          title="Ticket Médio"
-          value={formatBRL(financial.ticketAverage)}
-          subtitle="Valor médio por venda"
-          icon={<ShoppingBag size={20} />}
-          color="blue"
-          delay={0.3}
         />
       </div>
 
       {/* Value Cards */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
-          className="glass rounded-2xl p-5 col-span-1"
+          className="hidden"
         >
           <div className="flex items-center justify-between mb-4">
             <p className="text-xs font-semibold text-white/40 uppercase tracking-wider">Valor em Custo</p>
@@ -293,15 +279,15 @@ export function DashboardPage() {
           className="glass rounded-2xl p-5 col-span-1"
         >
           <div className="flex items-center justify-between mb-4">
-            <p className="text-xs font-semibold text-white/40 uppercase tracking-wider">Margem Potencial</p>
-            <Activity size={16} className="text-white/20" />
+            <p className="text-xs font-semibold text-white/40 uppercase tracking-wider">Saldo Final</p>
+            <Activity size={16} className="text-emerald-300" />
           </div>
           <p className="text-2xl font-bold text-emerald-400">
-            {formatBRL(stats.totalSaleValue - stats.totalCostValue)}
+            {formatBRL(financial.finalBalance)}
           </p>
           <div className="flex items-center gap-1.5 mt-2">
-            <ArrowUpRight size={14} className="text-emerald-400" />
-            <span className="text-xs text-white/30 font-medium">
+            <span className="text-xs text-white/30 font-medium">Vendas pagas menos saídas financeiras</span>
+            <span className="hidden">
               {stats.totalCostValue > 0
                 ? `${safeNumber(((stats.totalSaleValue - stats.totalCostValue) / stats.totalCostValue) * 100, 0).toFixed(1)}% de margem`
                 : '—'}
@@ -311,13 +297,13 @@ export function DashboardPage() {
       </div>
 
       {/* Charts Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-4">
         {/* Movement chart */}
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.35 }}
-          className="glass rounded-2xl p-5 lg:col-span-2"
+          className="glass rounded-2xl p-5"
         >
           <div className="flex items-center justify-between mb-5">
             <div>
@@ -352,7 +338,7 @@ export function DashboardPage() {
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.4 }}
-          className="glass rounded-2xl p-5"
+          className="hidden"
         >
           <div className="mb-4">
             <h3 className="text-sm font-semibold text-white">Estoque por Marca</h3>
@@ -399,7 +385,7 @@ export function DashboardPage() {
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.45 }}
-        className="glass rounded-2xl p-5"
+        className="hidden"
       >
         <div className="flex items-center justify-between mb-5">
           <div>
@@ -419,7 +405,7 @@ export function DashboardPage() {
       </motion.div>
 
       {/* Low Stock Alert */}
-      {stats.lowStockProducts + stats.outOfStockProducts > 0 && (
+      {false && stats.lowStockProducts + stats.outOfStockProducts > 0 && (
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
@@ -466,7 +452,7 @@ export function DashboardPage() {
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.5 }}
-        className="glass rounded-2xl overflow-hidden"
+        className="hidden"
       >
         <div className="flex items-center justify-between p-5 border-b border-white/[0.06]">
           <div>
