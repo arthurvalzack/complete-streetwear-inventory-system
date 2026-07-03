@@ -8,10 +8,11 @@ import {
   getProducts, getBrands, getCategories, getMovements, getAlerts,
   createProduct, updateProduct, deleteProduct,
   createMovement, deleteMovement, markMovementAsPaid, markAlertRead, markAllAlertsRead,
-  getStoreConfig, updateStoreConfig, loadRemoteToLocal,
+  getStoreConfig, updateStoreConfig, loadRemoteToLocal, refreshProductsFromRemote as refreshProductsFromRemoteCache,
   loadCashOutflows, createCashOutflow, updateCashOutflow, deleteCashOutflow,
   loadCashOutflowCategories, createCashOutflowCategory, updateCashOutflowCategory, deleteCashOutflowCategory,
-  uploadCashOutflowReceipt
+  uploadCashOutflowReceipt,
+  ProductRemoteRefreshResult
 } from '../lib/database';
 
 interface AppState {
@@ -44,6 +45,7 @@ interface AppState {
 
   // Data actions
   loadData: () => void;
+  refreshProductsFromRemote: () => Promise<ProductRemoteRefreshResult>;
   addProduct: (data: Omit<Product, 'id' | 'sku' | 'createdAt' | 'updatedAt' | 'totalQuantity'>) => Product;
   editProduct: (id: string, data: Partial<Product>) => void;
   removeProduct: (id: string) => void;
@@ -180,6 +182,15 @@ export const useStore = create<AppState>()(
             state.storeConfig = storeConfig;
           });
         });
+    },
+
+    refreshProductsFromRemote: async () => {
+      const result = await refreshProductsFromRemoteCache();
+      set(state => {
+        state.products = result.products;
+        state.alerts = result.alerts;
+      });
+      return result;
     },
 
     addProduct: (data) => {

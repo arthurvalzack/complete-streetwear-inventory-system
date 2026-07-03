@@ -294,6 +294,75 @@ function saveAlerts(alerts: Alert[]): void {
   safeSetLocalStorage(ALERTS_KEY, JSON.stringify(alerts));
 }
 
+export type ProductRemoteRefreshResult = {
+  changed: boolean;
+  products: Product[];
+  alerts: Alert[];
+  signature: string;
+};
+
+function productRemoteSignature(products: Product[]): string {
+  return products
+    .map(product => ({
+      id: product.id,
+      name: product.name,
+      sku: product.sku,
+      status: product.status,
+      updatedAt: product.updatedAt,
+      totalQuantity: safeNumber(product.totalQuantity, 0),
+      salePrice: safeNumber(product.salePrice, 0),
+      costPrice: safeNumber(product.costPrice, 0),
+      categoryId: product.categoryId,
+      categoryName: product.category?.name || (product as any).categoryName || (product as any).category_name || '',
+      variants: (product.variants || []).map(variant => ({
+        id: variant.id,
+        quantity: safeNumber(variant.quantity, 0),
+        salePrice: safeNumber(variant.salePrice, 0),
+        costPrice: safeNumber(variant.costPrice, 0),
+        size: variant.size || '',
+        color: variant.color || '',
+      })).sort((a, b) => a.id.localeCompare(b.id)),
+    }))
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map(product => JSON.stringify(product))
+    .join('|');
+}
+
+function stockAlertKey(alert: Pick<Alert, 'type' | 'productId'>): string {
+  return `${alert.type}:${alert.productId || ''}`;
+}
+
+function buildStockAlertsFromProducts(products: Product[], existingAlerts: Alert[]): Alert[] {
+  const now = new Date().toISOString();
+  const LOW_STOCK_THRESHOLD = 5;
+  const previousByKey = new Map(
+    existingAlerts
+      .filter(alert => alert.productId && (alert.type === 'low_stock' || alert.type === 'out_of_stock'))
+      .map(alert => [stockAlertKey(alert), alert])
+  );
+  const nonStockAlerts = existingAlerts.filter(alert => !alert.productId || (alert.type !== 'low_stock' && alert.type !== 'out_of_stock'));
+  const stockAlerts = products.flatMap(product => {
+    const quantity = safeNumber(product.totalQuantity, 0);
+    const type = quantity === 0 ? 'out_of_stock' : quantity <= LOW_STOCK_THRESHOLD ? 'low_stock' : null;
+    if (!type) return [];
+
+    const message = type === 'out_of_stock'
+      ? `Produto "${product.name}" esta ESGOTADO`
+      : `Estoque baixo: "${product.name}" - ${quantity} unidades restantes`;
+    const previous = previousByKey.get(`${type}:${product.id}`);
+    return [{
+      id: previous?.id || generateId('alert'),
+      type,
+      message,
+      productId: product.id,
+      createdAt: previous?.createdAt || now,
+      read: previous?.read || false,
+    } as Alert];
+  });
+
+  return [...nonStockAlerts, ...stockAlerts].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+}
+
 function saveCashOutflows(outflows: CashOutflow[]): void {
   safeSetLocalStorage(CASH_OUTFLOWS_KEY, JSON.stringify(outflows));
 }
@@ -836,6 +905,40 @@ export async function fetchProductsFromSupabase(): Promise<Product[]> {
   const { data, error } = await supabase.from('products').select('*');
   if (error) throw error;
   return (data || []).map(productFromSupabase);
+}
+
+export async function refreshProductsFromRemote(): Promise<ProductRemoteRefreshResult> {
+  const previousProducts = getProducts();
+  const previousSignature = productRemoteSignature(previousProducts);
+
+  if (!isSupabaseConfigured || !supabase) {
+    return {
+      changed: false,
+      products: previousProducts,
+      alerts: getAlerts(),
+      signature: previousSignature,
+    };
+  }
+
+  const remoteProducts = await fetchProductsFromSupabase();
+  const nextSignature = productRemoteSignature(remoteProducts);
+  const changed = previousSignature !== nextSignature;
+
+  suppressRemoteSync = true;
+  try {
+    saveProducts(remoteProducts);
+    const alerts = buildStockAlertsFromProducts(remoteProducts, getAlerts());
+    saveAlerts(alerts);
+    safeSetLocalStorage('stck_last_products_refresh', new Date().toISOString());
+    return {
+      changed,
+      products: remoteProducts,
+      alerts,
+      signature: nextSignature,
+    };
+  } finally {
+    suppressRemoteSync = false;
+  }
 }
 
 export async function fetchMovementsFromSupabase(): Promise<StockMovement[]> {

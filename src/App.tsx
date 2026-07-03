@@ -1,10 +1,11 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Toaster } from 'react-hot-toast';
+import toast from 'react-hot-toast';
 import { Routes, Route, Navigate, useLocation, useNavigate, Outlet } from 'react-router-dom';
 import { initializeAuth } from './lib/auth';
 import { seedDatabase, loadRemoteToLocal, getProducts, ensureBaseTaxonomy } from './lib/database';
-import { isSupabaseConfigured } from './lib/supabase';
+import { isSupabaseConfigured, supabase } from './lib/supabase';
 import { useStore } from './store/useStore';
 
 import { LoginPage } from './pages/LoginPage';
@@ -48,6 +49,61 @@ const pageConfig: Record<Page, { title: string; subtitle?: string }> = {
   cashier: { title: 'Caixa', subtitle: 'Registrar vendas do dia' },
   cash_outflows: { title: 'Saídas', subtitle: 'Controle de dinheiro que saiu da loja' },
 };
+
+const PRODUCT_REFRESH_POLL_MS = 30000;
+
+function useInventoryProductsAutoRefresh(enabled: boolean) {
+  const refreshProductsFromRemote = useStore(state => state.refreshProductsFromRemote);
+  const refreshInFlightRef = useRef(false);
+  const lastNoticeAtRef = useRef(0);
+
+  const showRefreshNotice = useCallback(() => {
+    const now = Date.now();
+    if (now - lastNoticeAtRef.current < 5000) return;
+    lastNoticeAtRef.current = now;
+    toast.success('Produtos atualizados automaticamente.');
+  }, []);
+
+  const runRefresh = useCallback(async () => {
+    if (refreshInFlightRef.current) return;
+    refreshInFlightRef.current = true;
+    try {
+      const result = await refreshProductsFromRemote();
+      if (result.changed) showRefreshNotice();
+    } catch (error) {
+      console.error('[PRODUCTS AUTO REFRESH ERROR]', error);
+    } finally {
+      refreshInFlightRef.current = false;
+    }
+  }, [refreshProductsFromRemote, showRefreshNotice]);
+
+  useEffect(() => {
+    if (!enabled || !isSupabaseConfigured || !supabase) return;
+
+    const channel = supabase
+      .channel('inventory-products-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => {
+        runRefresh();
+      })
+      .subscribe((status, error) => {
+        if (error) console.error('[PRODUCTS REALTIME ERROR]', error);
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.error('[PRODUCTS REALTIME STATUS]', status);
+        }
+      });
+
+    const intervalId = window.setInterval(() => {
+      runRefresh();
+    }, PRODUCT_REFRESH_POLL_MS);
+
+    return () => {
+      window.clearInterval(intervalId);
+      supabase.removeChannel(channel).catch(error => {
+        console.error('[PRODUCTS REALTIME CLEANUP ERROR]', error);
+      });
+    };
+  }, [enabled, runRefresh]);
+}
 
 function getPageFromPath(pathname: string): Page {
   const segments = pathname.split('/').filter(Boolean);
@@ -145,8 +201,11 @@ function LoginWrapper() {
 }
 
 function App() {
-  const { initSession } = useStore();
+  const initSession = useStore(state => state.initSession);
+  const isAuthenticated = useStore(state => state.isAuthenticated);
   const [appReady, setAppReady] = useState(false);
+
+  useInventoryProductsAutoRefresh(appReady && isAuthenticated);
 
   useEffect(() => {
     initializeAuth();
