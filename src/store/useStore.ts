@@ -1,14 +1,17 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import {
-  User, Product, StockMovement, Brand, Category, Alert, FilterOptions, StoreConfig
+  User, Product, StockMovement, Brand, Category, Alert, FilterOptions, StoreConfig, CashOutflow, CashOutflowCategory
 } from '../types';
 import { getSession, login as authLogin, logout as authLogout } from '../lib/auth';
 import {
   getProducts, getBrands, getCategories, getMovements, getAlerts,
   createProduct, updateProduct, deleteProduct,
   createMovement, deleteMovement, markMovementAsPaid, markAlertRead, markAllAlertsRead,
-  getStoreConfig, updateStoreConfig, loadRemoteToLocal
+  getStoreConfig, updateStoreConfig, loadRemoteToLocal,
+  loadCashOutflows, createCashOutflow, updateCashOutflow, deleteCashOutflow,
+  loadCashOutflowCategories, createCashOutflowCategory, updateCashOutflowCategory, deleteCashOutflowCategory,
+  uploadCashOutflowReceipt
 } from '../lib/database';
 
 interface AppState {
@@ -23,6 +26,8 @@ interface AppState {
   brands: Brand[];
   categories: Category[];
   alerts: Alert[];
+  cashOutflows: CashOutflow[];
+  cashOutflowCategories: CashOutflowCategory[];
   storeConfig: StoreConfig;
 
   // UI
@@ -45,6 +50,13 @@ interface AppState {
   addMovement: (data: Omit<StockMovement, 'id' | 'createdAt' | 'previousQuantity' | 'newQuantity'>) => StockMovement | null;
   removeMovement: (id: string) => Promise<boolean>;
   markMovementPaid: (id: string, paymentMethod: string) => Promise<StockMovement>;
+  addCashOutflow: (data: Omit<CashOutflow, 'id' | 'createdAt' | 'updatedAt'>) => Promise<CashOutflow>;
+  editCashOutflow: (id: string, data: Partial<CashOutflow>) => Promise<CashOutflow>;
+  removeCashOutflow: (id: string) => Promise<boolean>;
+  addCashOutflowCategory: (name: string) => Promise<CashOutflowCategory>;
+  editCashOutflowCategory: (id: string, data: Partial<CashOutflowCategory>) => Promise<CashOutflowCategory>;
+  removeCashOutflowCategory: (id: string) => Promise<boolean>;
+  uploadOutflowReceipt: (file: File) => Promise<Pick<CashOutflow, 'receiptUrl' | 'receiptFileName' | 'receiptMimeType' | 'receiptSize'>>;
   readAlert: (id: string) => void;
   readAllAlerts: () => void;
   updateStoreConfig: (data: Partial<StoreConfig>) => void;
@@ -80,6 +92,8 @@ export const useStore = create<AppState>()(
     brands: [],
     categories: [],
     alerts: [],
+    cashOutflows: [],
+    cashOutflowCategories: [],
     storeConfig: getStoreConfig(),
     sidebarOpen: true,
     filters: defaultFilters,
@@ -119,6 +133,8 @@ export const useStore = create<AppState>()(
         state.products = [];
         state.movements = [];
         state.alerts = [];
+        state.cashOutflows = [];
+        state.cashOutflowCategories = [];
       });
     },
 
@@ -130,6 +146,8 @@ export const useStore = create<AppState>()(
           const brands = getBrands();
           const categories = getCategories();
           const alerts = getAlerts();
+          const cashOutflows = loadCashOutflows();
+          const cashOutflowCategories = loadCashOutflowCategories();
           const storeConfig = getStoreConfig();
           set(state => {
             state.products = products;
@@ -137,6 +155,8 @@ export const useStore = create<AppState>()(
             state.brands = brands;
             state.categories = categories;
             state.alerts = alerts;
+            state.cashOutflows = cashOutflows;
+            state.cashOutflowCategories = cashOutflowCategories;
             state.storeConfig = storeConfig;
           });
         }).catch((error) => {
@@ -146,6 +166,8 @@ export const useStore = create<AppState>()(
           const brands = getBrands();
           const categories = getCategories();
           const alerts = getAlerts();
+          const cashOutflows = loadCashOutflows();
+          const cashOutflowCategories = loadCashOutflowCategories();
           const storeConfig = getStoreConfig();
           set(state => {
             state.products = products;
@@ -153,6 +175,8 @@ export const useStore = create<AppState>()(
             state.brands = brands;
             state.categories = categories;
             state.alerts = alerts;
+            state.cashOutflows = cashOutflows;
+            state.cashOutflowCategories = cashOutflowCategories;
             state.storeConfig = storeConfig;
           });
         });
@@ -220,6 +244,56 @@ export const useStore = create<AppState>()(
       });
       return updated;
     },
+
+    addCashOutflow: async (data) => {
+      const outflow = await createCashOutflow(data);
+      set(state => {
+        state.cashOutflows = loadCashOutflows();
+      });
+      return outflow;
+    },
+
+    editCashOutflow: async (id, data) => {
+      const outflow = await updateCashOutflow(id, data);
+      set(state => {
+        state.cashOutflows = loadCashOutflows();
+      });
+      return outflow;
+    },
+
+    removeCashOutflow: async (id) => {
+      const removed = await deleteCashOutflow(id);
+      set(state => {
+        state.cashOutflows = loadCashOutflows();
+      });
+      return removed;
+    },
+
+    addCashOutflowCategory: async (name) => {
+      const category = await createCashOutflowCategory(name);
+      set(state => {
+        state.cashOutflowCategories = loadCashOutflowCategories();
+      });
+      return category;
+    },
+
+    editCashOutflowCategory: async (id, data) => {
+      const category = await updateCashOutflowCategory(id, data);
+      set(state => {
+        state.cashOutflowCategories = loadCashOutflowCategories();
+      });
+      return category;
+    },
+
+    removeCashOutflowCategory: async (id) => {
+      const removed = await deleteCashOutflowCategory(id);
+      set(state => {
+        state.cashOutflowCategories = loadCashOutflowCategories();
+      });
+      return removed;
+    },
+
+    uploadOutflowReceipt: (file) => uploadCashOutflowReceipt(file),
 
     readAlert: (id) => {
       markAlertRead(id);

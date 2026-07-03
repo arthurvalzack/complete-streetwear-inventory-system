@@ -95,12 +95,20 @@ export interface StockMovement {
   // Cost price per unit at time of movement
   costPrice?: number;
   unitCost?: number;
-  // Total value for this movement (unitPrice * quantity)
+  // Total value for this movement after discounts
   totalValue?: number;
   totalAmount?: number;
   totalCost?: number;
   totalProfit?: number;
   profit?: number;
+  discountType?: 'fixed' | 'percent' | 'none';
+  discountAmount?: number;
+  discountPercent?: number;
+  subtotalAmount?: number;
+  finalAmount?: number;
+  saleSubtotal?: number;
+  saleDiscountTotal?: number;
+  saleFinalTotal?: number;
   // Snapshot of product name to avoid lookup later
   productName?: string;
   customerName?: string;
@@ -154,6 +162,32 @@ export interface Alert {
 export interface StoreConfig {
   storeName: string;
   logoUrl?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CashOutflow {
+  id: string;
+  description: string;
+  amount: number;
+  categoryId?: string | null;
+  categoryName: string;
+  paymentMethod: string;
+  outflowDate: string;
+  notes?: string | null;
+  receiptUrl?: string | null;
+  receiptFileName?: string | null;
+  receiptMimeType?: string | null;
+  receiptSize?: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CashOutflowCategory {
+  id: string;
+  name: string;
+  isActive: boolean;
+  sortOrder: number;
   createdAt: string;
   updatedAt: string;
 }

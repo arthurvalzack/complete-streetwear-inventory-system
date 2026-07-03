@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import {
   Plus, ArrowUpRight, ArrowDownRight, Activity,
-  ArrowLeftRight, CheckCircle2, Trash2
+  ArrowLeftRight, CheckCircle2, Trash2, Wallet
 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { useStore } from '../store/useStore';
@@ -32,6 +32,10 @@ function displayMovementField(value: any): string {
   return text || 'Nao informado';
 }
 
+function formatBRL(value: any): string {
+  return safeNumber(value, 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
 function getPaymentStatus(movement: StockMovement): 'paid' | 'pending' | 'cancelled' {
   return movement.paymentStatus || 'paid';
 }
@@ -45,6 +49,15 @@ function getVariantLabel(movement: StockMovement): string {
   );
 }
 
+function movementAmounts(movement: StockMovement) {
+  const quantity = safeNumber(movement.quantity, 0);
+  const unitPrice = safeNumber(movement.unitPrice ?? (movement as any).unit_price ?? movement.variant?.salePrice ?? movement.product?.salePrice, 0);
+  const subtotalAmount = safeNumber(movement.subtotalAmount ?? (movement as any).subtotal_amount, unitPrice * quantity);
+  const discountAmount = safeNumber(movement.discountAmount ?? (movement as any).discount_amount, 0);
+  const finalAmount = safeNumber(movement.finalAmount ?? (movement as any).final_amount ?? movement.totalAmount ?? (movement as any).total_amount ?? movement.totalValue, subtotalAmount - discountAmount);
+  return { subtotalAmount, discountAmount, finalAmount };
+}
+
 const movementTypeConfig = {
   entry: { label: 'Entrada', variant: 'success' as const, icon: <ArrowUpRight size={14} />, color: 'rgba(16,185,129,0.15)', textColor: '#34d399' },
   exit: { label: 'Saída', variant: 'danger' as const, icon: <ArrowDownRight size={14} />, color: 'rgba(239,68,68,0.15)', textColor: '#f87171' },
@@ -54,7 +67,7 @@ const movementTypeConfig = {
 };
 
 export function MovementsPage() {
-  const { products, movements, addMovement, markMovementPaid, user, currentPage, setCurrentPage } = useStore();
+  const { products, movements, cashOutflows, removeCashOutflow, addMovement, markMovementPaid, user, currentPage, setCurrentPage } = useStore();
 
   const [showModal, setShowModal] = useState(false);
   const [paymentModalMovement, setPaymentModalMovement] = useState<StockMovement | null>(null);
@@ -186,6 +199,20 @@ export function MovementsPage() {
       ),
     },
     {
+      key: 'amounts',
+      header: 'Valores',
+      render: (m: StockMovement) => {
+        const amounts = movementAmounts(m);
+        return (
+          <div className="space-y-0.5">
+            <p className="text-xs text-white/35">Subtotal: {formatBRL(amounts.subtotalAmount)}</p>
+            <p className="text-xs text-amber-200/80">Desconto: {formatBRL(amounts.discountAmount)}</p>
+            <p className="text-sm font-semibold text-white">Final: {formatBRL(amounts.finalAmount)}</p>
+          </div>
+        );
+      },
+    },
+    {
       key: 'payment',
       header: 'Pagamento',
       render: (m: StockMovement) => {
@@ -278,8 +305,9 @@ export function MovementsPage() {
     const entries = movements.filter(m => m.type === 'entry').reduce((acc, m) => acc + safeNumber(m.quantity, 0), 0);
     const exits = movements.filter(m => m.type === 'exit').reduce((acc, m) => acc + safeNumber(m.quantity, 0), 0);
     const adjustments = movements.filter(m => m.type === 'adjustment').length;
-    return { total, entries, exits, adjustments };
-  }, [movements]);
+    const financialOutflows = cashOutflows.reduce((acc, outflow) => acc + safeNumber(outflow.amount, 0), 0);
+    return { total, entries, exits, adjustments, financialOutflows };
+  }, [movements, cashOutflows]);
 
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-5">
@@ -290,6 +318,7 @@ export function MovementsPage() {
           { label: 'Unidades Entradas', value: stats.entries, color: '#34d399' },
           { label: 'Unidades Saídas', value: stats.exits, color: '#f87171' },
           { label: 'Ajustes Realizados', value: stats.adjustments, color: '#fbbf24' },
+          { label: 'Saidas Financeiras', value: formatBRL(stats.financialOutflows), color: '#fb7185' },
         ].map((s, i) => (
           <motion.div
             key={s.label}
@@ -360,6 +389,69 @@ export function MovementsPage() {
             itemsPerPage={ITEMS_PER_PAGE}
           />
         )}
+      </motion.div>
+
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="glass rounded-2xl overflow-hidden"
+      >
+        <div className="flex items-center justify-between border-b border-white/[0.06] px-5 py-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-red-500/10 text-red-300">
+              <Wallet size={16} />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-white">Saidas financeiras</h3>
+              <p className="text-xs text-white/30">Registros financeiros separados das saidas de estoque</p>
+            </div>
+          </div>
+          <Badge variant="danger" size="sm">{cashOutflows.length} registros</Badge>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-white/[0.06]">
+                {['Data', 'Descricao', 'Categoria', 'Valor', 'Pagamento', 'Comprovante', ''].map(header => (
+                  <th key={header} className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-widest text-white/30">{header}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {cashOutflows.slice(0, 8).map(outflow => (
+                <tr key={outflow.id} className="border-b border-white/[0.04] last:border-0">
+                  <td className="px-4 py-3 text-sm text-white/45">{format(parseISO(outflow.outflowDate), 'dd/MM/yyyy')}</td>
+                  <td className="px-4 py-3 text-sm text-white/80">{outflow.description}</td>
+                  <td className="px-4 py-3 text-sm text-white/60">{outflow.categoryName}</td>
+                  <td className="px-4 py-3 text-sm font-semibold text-red-300">{formatBRL(outflow.amount)}</td>
+                  <td className="px-4 py-3 text-sm text-white/60">{outflow.paymentMethod}</td>
+                  <td className="px-4 py-3 text-sm">{outflow.receiptUrl ? <a href={outflow.receiptUrl} target="_blank" rel="noreferrer" className="text-indigo-300">Ver comprovante</a> : <span className="text-white/25">Sem comprovante</span>}</td>
+                  <td className="px-4 py-3 text-right">
+                    <button
+                      onClick={async () => {
+                        if (!confirm('Excluir esta saida financeira? Isso nao altera estoque.')) return;
+                        try {
+                          await removeCashOutflow(outflow.id);
+                          toast.success('Saida financeira excluida.');
+                        } catch (error) {
+                          console.error('[CASH OUTFLOW DELETE ERROR]', error);
+                          toast.error('Nao foi possivel excluir a saida financeira.');
+                        }
+                      }}
+                      className="rounded-lg p-2 text-red-400 hover:bg-red-500/10"
+                      title="Excluir saida financeira"
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {cashOutflows.length === 0 && (
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-white/35">Nenhuma saida financeira registrada.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </motion.div>
 
       <Modal

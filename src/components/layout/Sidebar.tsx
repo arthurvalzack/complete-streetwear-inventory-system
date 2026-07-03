@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, Package, ArrowLeftRight, BarChart3,
   Bell, LogOut, ChevronLeft, ChevronRight,
-  ShoppingBag, AlertTriangle, DollarSign, Settings
+  AlertTriangle, DollarSign, Settings, Wallet
 } from 'lucide-react';
 import { useStore } from '../../store/useStore';
 
@@ -25,13 +25,14 @@ const navItems: NavItem[] = [
   { id: 'movements', label: 'Movimentações', icon: <ArrowLeftRight size={18} /> },
   { id: 'alerts', label: 'Alertas', icon: <AlertTriangle size={18} /> },
   { id: 'reports', label: 'Relatórios', icon: <BarChart3 size={18} /> },
-  { id: 'settings', label: 'Configurações', icon: <Settings size={18} /> },
   { id: 'cashier', label: 'Caixa', icon: <DollarSign size={18} /> },
+  { id: 'cash_outflows', label: 'Saídas', icon: <Wallet size={18} /> },
 ];
 
 export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
-  const { user, logout, sidebarOpen, setSidebarOpen, alerts, storeConfig } = useStore();
+  const { user, logout, sidebarOpen, setSidebarOpen, alerts, movements, storeConfig } = useStore();
   const unreadAlerts = alerts.filter(a => !a.read).length;
+  const pendingSales = movements.filter((movement: any) => (movement.paymentStatus ?? movement.payment_status ?? 'paid') === 'pending').length;
 
   return (
     <>
@@ -148,16 +149,15 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
 
         {/* Bottom section */}
         <div className="flex-shrink-0 space-y-1.5 border-t border-gray-800/80 p-3">
-          {/* Catalog shortcut */}
           <button
-            onClick={() => onNavigate('admin_catalog')}
-            className={`nav-item group flex w-full items-center gap-3 rounded-lg px-3 py-2.5 transition-all duration-200 ${currentPage === 'admin_catalog' ? 'active bg-indigo-500/15 text-white shadow-lg shadow-indigo-500/20 ring-1 ring-indigo-400/20' : 'bg-transparent text-gray-400 hover:bg-white/5 hover:text-white'}`}
+            onClick={() => onNavigate('settings')}
+            className={`nav-item group flex w-full items-center gap-3 rounded-lg px-3 py-2.5 transition-all duration-200 ${currentPage === 'settings' ? 'active bg-indigo-500/15 text-white shadow-lg shadow-indigo-500/20 ring-1 ring-indigo-400/20' : 'bg-transparent text-gray-400 hover:bg-white/5 hover:text-white'}`}
           >
-            <ShoppingBag size={18} className={`flex-shrink-0 transition-colors duration-200 ${currentPage === 'admin_catalog' ? 'text-white' : 'text-gray-400 group-hover:text-white'}`} />
+            <Settings size={18} className={`flex-shrink-0 transition-colors duration-200 ${currentPage === 'settings' ? 'text-white' : 'text-gray-400 group-hover:text-white'}`} />
             <AnimatePresence>
               {sidebarOpen && (
                 <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="whitespace-nowrap text-sm font-medium">
-                  Catálogo
+                  Configurações
                 </motion.span>
               )}
             </AnimatePresence>
@@ -168,15 +168,15 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
             className={`nav-item group relative flex w-full items-center gap-3 rounded-lg px-3 py-2.5 transition-all duration-200 ${currentPage === 'notifications' ? 'active bg-indigo-500/15 text-white shadow-lg shadow-indigo-500/20 ring-1 ring-indigo-400/20' : 'bg-transparent text-gray-400 hover:bg-white/5 hover:text-white'}`}
           >
             <Bell size={18} className={`flex-shrink-0 transition-colors duration-200 ${currentPage === 'notifications' ? 'text-white' : 'text-gray-400 group-hover:text-white'}`} />
-            {unreadAlerts > 0 && !sidebarOpen && (
+            {pendingSales > 0 && !sidebarOpen && (
               <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.8)]" />
             )}
             <AnimatePresence>
               {sidebarOpen && (
                 <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex flex-1 items-center whitespace-nowrap text-sm font-medium">
-                  Notificações
-                  {unreadAlerts > 0 && (
-                    <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 text-xs font-bold leading-none text-white shadow-lg shadow-red-500/25">{unreadAlerts > 9 ? '9+' : unreadAlerts}</span>
+                  Pendentes
+                  {pendingSales > 0 && (
+                    <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 text-xs font-bold leading-none text-white shadow-lg shadow-red-500/25">{pendingSales > 9 ? '9+' : pendingSales}</span>
                   )}
                 </motion.span>
               )}

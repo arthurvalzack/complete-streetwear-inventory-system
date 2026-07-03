@@ -109,6 +109,14 @@ create table if not exists movements (
   unit_price numeric not null default 0,
   unit_cost numeric not null default 0,
   cost_price numeric not null default 0,
+  discount_type text default 'none',
+  discount_amount numeric not null default 0,
+  discount_percent numeric not null default 0,
+  subtotal_amount numeric not null default 0,
+  final_amount numeric not null default 0,
+  sale_subtotal numeric not null default 0,
+  sale_discount_total numeric not null default 0,
+  sale_final_total numeric not null default 0,
   total_amount numeric not null default 0,
   total_cost numeric not null default 0,
   total_profit numeric not null default 0,
@@ -143,6 +151,14 @@ alter table movements add column if not exists quantity integer not null default
 alter table movements add column if not exists unit_price numeric not null default 0;
 alter table movements add column if not exists unit_cost numeric not null default 0;
 alter table movements add column if not exists cost_price numeric not null default 0;
+alter table movements add column if not exists discount_type text default 'none';
+alter table movements add column if not exists discount_amount numeric not null default 0;
+alter table movements add column if not exists discount_percent numeric not null default 0;
+alter table movements add column if not exists subtotal_amount numeric not null default 0;
+alter table movements add column if not exists final_amount numeric not null default 0;
+alter table movements add column if not exists sale_subtotal numeric not null default 0;
+alter table movements add column if not exists sale_discount_total numeric not null default 0;
+alter table movements add column if not exists sale_final_total numeric not null default 0;
 alter table movements add column if not exists total_amount numeric not null default 0;
 alter table movements add column if not exists total_cost numeric not null default 0;
 alter table movements add column if not exists total_profit numeric not null default 0;
@@ -166,6 +182,14 @@ set
   quantity = coalesce(quantity, 0),
   unit_price = coalesce(unit_price, 0),
   unit_cost = coalesce(unit_cost, cost_price, 0),
+  discount_type = coalesce(discount_type, 'none'),
+  discount_amount = coalesce(discount_amount, 0),
+  discount_percent = coalesce(discount_percent, 0),
+  subtotal_amount = coalesce(nullif(subtotal_amount, 0), total_value, total_amount, coalesce(unit_price, 0) * coalesce(quantity, 0), 0),
+  final_amount = coalesce(nullif(final_amount, 0), total_amount, total_value, coalesce(unit_price, 0) * coalesce(quantity, 0), 0),
+  sale_subtotal = coalesce(nullif(sale_subtotal, 0), nullif(subtotal_amount, 0), total_value, total_amount, coalesce(unit_price, 0) * coalesce(quantity, 0), 0),
+  sale_discount_total = coalesce(sale_discount_total, discount_amount, 0),
+  sale_final_total = coalesce(nullif(sale_final_total, 0), nullif(final_amount, 0), total_amount, total_value, coalesce(unit_price, 0) * coalesce(quantity, 0), 0),
   total_amount = coalesce(total_amount, total_value, coalesce(unit_price, 0) * coalesce(quantity, 0), 0),
   total_cost = coalesce(total_cost, coalesce(unit_cost, cost_price, 0) * coalesce(quantity, 0), 0),
   total_profit = coalesce(total_profit, profit, coalesce(total_amount, total_value, 0) - coalesce(total_cost, 0), 0),
@@ -176,6 +200,14 @@ where
   quantity is null
   or unit_price is null
   or unit_cost is null
+  or discount_type is null
+  or discount_amount is null
+  or discount_percent is null
+  or subtotal_amount is null
+  or final_amount is null
+  or sale_subtotal is null
+  or sale_discount_total is null
+  or sale_final_total is null
   or total_amount is null
   or total_cost is null
   or total_profit is null
@@ -231,6 +263,93 @@ alter table catalog_config add column if not exists items jsonb not null default
 alter table catalog_config add column if not exists config jsonb not null default '{}'::jsonb;
 alter table catalog_config add column if not exists updated_at timestamptz not null default now();
 create unique index if not exists catalog_config_id_uidx on catalog_config (id);
+
+create table if not exists cash_outflow_categories (
+  id text primary key,
+  name text not null,
+  is_active boolean not null default true,
+  sort_order integer not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table cash_outflow_categories add column if not exists name text;
+alter table cash_outflow_categories add column if not exists is_active boolean not null default true;
+alter table cash_outflow_categories add column if not exists sort_order integer not null default 0;
+alter table cash_outflow_categories add column if not exists created_at timestamptz not null default now();
+alter table cash_outflow_categories add column if not exists updated_at timestamptz not null default now();
+create unique index if not exists cash_outflow_categories_id_uidx on cash_outflow_categories (id);
+create index if not exists cash_outflow_categories_active_idx on cash_outflow_categories (is_active);
+
+create table if not exists cash_outflows (
+  id text primary key,
+  description text not null,
+  amount numeric not null default 0,
+  category_id text,
+  category_name text not null,
+  payment_method text,
+  outflow_date timestamptz not null default now(),
+  notes text,
+  receipt_url text,
+  receipt_file_name text,
+  receipt_mime_type text,
+  receipt_size integer,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table cash_outflows add column if not exists description text;
+alter table cash_outflows add column if not exists amount numeric not null default 0;
+alter table cash_outflows add column if not exists category_id text;
+alter table cash_outflows add column if not exists category_name text;
+alter table cash_outflows add column if not exists payment_method text;
+alter table cash_outflows add column if not exists outflow_date timestamptz not null default now();
+alter table cash_outflows add column if not exists notes text;
+alter table cash_outflows add column if not exists receipt_url text;
+alter table cash_outflows add column if not exists receipt_file_name text;
+alter table cash_outflows add column if not exists receipt_mime_type text;
+alter table cash_outflows add column if not exists receipt_size integer;
+alter table cash_outflows add column if not exists created_at timestamptz not null default now();
+alter table cash_outflows add column if not exists updated_at timestamptz not null default now();
+create unique index if not exists cash_outflows_id_uidx on cash_outflows (id);
+create index if not exists cash_outflows_outflow_date_idx on cash_outflows (outflow_date desc);
+create index if not exists cash_outflows_category_id_idx on cash_outflows (category_id);
+
+insert into cash_outflow_categories (id, name, is_active, sort_order)
+values
+  ('outcat_001', 'Compra de mercadoria', true, 0),
+  ('outcat_002', 'Sacolas', true, 1),
+  ('outcat_003', 'Tags', true, 2),
+  ('outcat_004', 'Frete', true, 3),
+  ('outcat_005', 'Marketing', true, 4),
+  ('outcat_006', 'Aluguel', true, 5),
+  ('outcat_007', 'Funcionário', true, 6),
+  ('outcat_008', 'Outros', true, 7)
+on conflict (id) do update set
+  name = excluded.name,
+  is_active = true,
+  sort_order = excluded.sort_order,
+  updated_at = now();
+
+insert into storage.buckets (id, name, public)
+values ('expense-receipts', 'expense-receipts', true)
+on conflict (id) do update set public = true;
+
+do $$
+begin
+  if not exists (select 1 from pg_policies where schemaname = 'storage' and tablename = 'objects' and policyname = 'allow_select_expense_receipts') then
+    create policy "allow_select_expense_receipts" on storage.objects for select to anon, authenticated using (bucket_id = 'expense-receipts');
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'storage' and tablename = 'objects' and policyname = 'allow_insert_expense_receipts') then
+    create policy "allow_insert_expense_receipts" on storage.objects for insert to anon, authenticated with check (bucket_id = 'expense-receipts');
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'storage' and tablename = 'objects' and policyname = 'allow_update_expense_receipts') then
+    create policy "allow_update_expense_receipts" on storage.objects for update to anon, authenticated using (bucket_id = 'expense-receipts') with check (bucket_id = 'expense-receipts');
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'storage' and tablename = 'objects' and policyname = 'allow_delete_expense_receipts') then
+    create policy "allow_delete_expense_receipts" on storage.objects for delete to anon, authenticated using (bucket_id = 'expense-receipts');
+  end if;
+end $$;
 
 insert into app_state (id, data)
 values ('global', '{}'::jsonb)

@@ -1,4 +1,4 @@
-import { Product, StockMovement, Brand, Category, Alert, StoreConfig } from '../types';
+import { Product, StockMovement, Brand, Category, Alert, StoreConfig, CashOutflow, CashOutflowCategory } from '../types';
 import { supabase, isSupabaseConfigured } from './supabase';
 import { shouldSyncCatalogStock, syncCatalogStockAfterRestore } from './catalogStockSync';
 
@@ -9,10 +9,23 @@ const BRANDS_KEY = 'stck_brands';
 const CATEGORIES_KEY = 'stck_categories';
 const ALERTS_KEY = 'stck_alerts';
 const STORE_CONFIG_KEY = 'stck_store_config';
+const CASH_OUTFLOWS_KEY = 'stck_cash_outflows';
+const CASH_OUTFLOW_CATEGORIES_KEY = 'stck_cash_outflow_categories';
 const INITIALIZED_KEY = 'stck_db_initialized';
 const CATALOG_ITEMS_KEY = 'frazon_catalogo_items';
 const CATALOG_CONFIG_KEY = 'catalogoConfig';
 const APP_STATE_ID = 'global';
+const CASH_OUTFLOW_RECEIPTS_BUCKET = 'expense-receipts';
+const DEFAULT_CASH_OUTFLOW_CATEGORIES = [
+  'Compra de mercadoria',
+  'Sacolas',
+  'Tags',
+  'Frete',
+  'Marketing',
+  'Aluguel',
+  'Funcionário',
+  'Outros',
+];
 
 // When true, avoid syncing local changes up to remote (used during initial seeding)
 let suppressRemoteSync = false;
@@ -106,10 +119,16 @@ function getMovementTotals(m: any, product?: Product | null) {
   const quantity = safeNumber(m?.quantity, 0);
   const unitPrice = getMovementUnitPrice(m, product);
   const unitCost = getMovementUnitCost(m, product);
-  const totalAmount = safeNumber(m?.totalAmount ?? m?.total_amount ?? m?.totalValue ?? m?.total_value, unitPrice * quantity);
+  const rawSubtotal = safeNumber(m?.subtotalAmount ?? m?.subtotal_amount, unitPrice * quantity);
+  const discountAmount = Math.max(0, safeNumber(m?.discountAmount ?? m?.discount_amount, 0));
+  const totalAmount = safeNumber(
+    m?.finalAmount ?? m?.final_amount ?? m?.totalAmount ?? m?.total_amount ?? m?.totalValue ?? m?.total_value,
+    Math.max(0, rawSubtotal - discountAmount)
+  );
   const totalCost = safeNumber(m?.totalCost ?? m?.total_cost, unitCost * quantity);
   const totalProfit = safeNumber(m?.totalProfit ?? m?.total_profit ?? m?.profit, totalAmount - totalCost);
-  return { quantity, unitPrice, unitCost, totalAmount, totalCost, totalProfit };
+  const subtotalAmount = safeNumber(m?.subtotalAmount ?? m?.subtotal_amount, totalAmount + discountAmount);
+  return { quantity, unitPrice, unitCost, subtotalAmount, discountAmount, totalAmount, totalCost, totalProfit };
 }
 
 // Data retrieval
@@ -159,18 +178,79 @@ export function getMovements(): StockMovement[] {
   try {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.map((movement: any) => ({
-      ...movement,
-      customerName: movement.customerName ?? movement.customer_name ?? '',
-      variantLabel: movement.variantLabel ?? movement.variant_label ?? movement.variantName ?? movement.variant_name ?? '',
-      size: movement.size ?? movement.variant?.size ?? '',
-      color: movement.color ?? movement.variant?.color ?? '',
-      paymentStatus: movement.paymentStatus ?? movement.payment_status ?? 'paid',
-      paymentMethod: movement.paymentMethod ?? movement.payment_method ?? '',
-      paidAt: movement.paidAt ?? movement.paid_at ?? null,
-      saleGroupId: movement.saleGroupId ?? movement.sale_group_id ?? '',
-    }));
+    return parsed.map((movement: any) => {
+      const totals = getMovementTotals(movement);
+      return {
+        ...movement,
+        customerName: movement.customerName ?? movement.customer_name ?? '',
+        variantLabel: movement.variantLabel ?? movement.variant_label ?? movement.variantName ?? movement.variant_name ?? '',
+        size: movement.size ?? movement.variant?.size ?? '',
+        color: movement.color ?? movement.variant?.color ?? '',
+        paymentStatus: movement.paymentStatus ?? movement.payment_status ?? 'paid',
+        paymentMethod: movement.paymentMethod ?? movement.payment_method ?? '',
+        paidAt: movement.paidAt ?? movement.paid_at ?? null,
+        saleGroupId: movement.saleGroupId ?? movement.sale_group_id ?? '',
+        discountType: movement.discountType ?? movement.discount_type ?? (totals.discountAmount > 0 ? 'fixed' : 'none'),
+        discountAmount: totals.discountAmount,
+        discountPercent: safeNumber(movement.discountPercent ?? movement.discount_percent, 0),
+        subtotalAmount: totals.subtotalAmount,
+        finalAmount: totals.totalAmount,
+        saleSubtotal: safeNumber(movement.saleSubtotal ?? movement.sale_subtotal, totals.subtotalAmount),
+        saleDiscountTotal: safeNumber(movement.saleDiscountTotal ?? movement.sale_discount_total, totals.discountAmount),
+        saleFinalTotal: safeNumber(movement.saleFinalTotal ?? movement.sale_final_total, totals.totalAmount),
+      };
+    });
   } catch { return []; }
+}
+
+function normalizeCashOutflowCategory(category: any, index = 0): CashOutflowCategory {
+  const now = new Date().toISOString();
+  return {
+    id: category?.id || generateId('outcat'),
+    name: String(category?.name || '').trim() || 'Outros',
+    isActive: category?.isActive ?? category?.is_active ?? true,
+    sortOrder: safeNumber(category?.sortOrder ?? category?.sort_order, index),
+    createdAt: category?.createdAt || category?.created_at || now,
+    updatedAt: category?.updatedAt || category?.updated_at || now,
+  };
+}
+
+function getDefaultCashOutflowCategories(): CashOutflowCategory[] {
+  const now = new Date().toISOString();
+  return DEFAULT_CASH_OUTFLOW_CATEGORIES.map((name, index) => ({
+    id: `outcat_${String(index + 1).padStart(3, '0')}`,
+    name,
+    isActive: true,
+    sortOrder: index,
+    createdAt: now,
+    updatedAt: now,
+  }));
+}
+
+export function getCashOutflows(): CashOutflow[] {
+  const raw = safeGetLocalStorage(CASH_OUTFLOWS_KEY);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map(cashOutflowFromAny).sort((a, b) => new Date(b.outflowDate).getTime() - new Date(a.outflowDate).getTime());
+  } catch (error) {
+    console.error('[CASH OUTFLOW LOAD ERROR]', error);
+    return [];
+  }
+}
+
+export function getCashOutflowCategories(): CashOutflowCategory[] {
+  const raw = safeGetLocalStorage(CASH_OUTFLOW_CATEGORIES_KEY);
+  if (!raw) return getDefaultCashOutflowCategories();
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length === 0) return getDefaultCashOutflowCategories();
+    return parsed.map(normalizeCashOutflowCategory).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+  } catch (error) {
+    console.error('[CASH OUTFLOW LOAD ERROR]', error);
+    return getDefaultCashOutflowCategories();
+  }
 }
 
 export function getBrands(): Brand[] {
@@ -212,6 +292,14 @@ function saveCategories(categories: Category[]): void {
 
 function saveAlerts(alerts: Alert[]): void {
   safeSetLocalStorage(ALERTS_KEY, JSON.stringify(alerts));
+}
+
+function saveCashOutflows(outflows: CashOutflow[]): void {
+  safeSetLocalStorage(CASH_OUTFLOWS_KEY, JSON.stringify(outflows));
+}
+
+function saveCashOutflowCategories(categories: CashOutflowCategory[]): void {
+  safeSetLocalStorage(CASH_OUTFLOW_CATEGORIES_KEY, JSON.stringify(categories));
 }
 
 async function upsertAlertsToSupabase(alerts: Alert[]): Promise<void> {
@@ -493,6 +581,11 @@ export function movementToSupabase(m: any): any {
   const variantLabel = m.variantLabel || m.variant_label || variantName || null;
   const customerName = String(m.customerName ?? m.customer_name ?? '').trim();
   const paymentStatus = m.paymentStatus || m.payment_status || 'paid';
+  const discountType = m.discountType || m.discount_type || (totals.discountAmount > 0 ? 'fixed' : 'none');
+  const discountPercent = safeNumber(m.discountPercent ?? m.discount_percent, 0);
+  const saleSubtotal = safeNumber(m.saleSubtotal ?? m.sale_subtotal, totals.subtotalAmount);
+  const saleDiscountTotal = safeNumber(m.saleDiscountTotal ?? m.sale_discount_total, totals.discountAmount);
+  const saleFinalTotal = safeNumber(m.saleFinalTotal ?? m.sale_final_total, totals.totalAmount);
   return {
     id: m.id,
     type: m.type || 'exit',
@@ -511,6 +604,14 @@ export function movementToSupabase(m: any): any {
     quantity: totals.quantity,
     unit_price: totals.unitPrice,
     unit_cost: totals.unitCost,
+    discount_type: discountType,
+    discount_amount: totals.discountAmount,
+    discount_percent: discountPercent,
+    subtotal_amount: totals.subtotalAmount,
+    final_amount: totals.totalAmount,
+    sale_subtotal: saleSubtotal,
+    sale_discount_total: saleDiscountTotal,
+    sale_final_total: saleFinalTotal,
     total_amount: totals.totalAmount,
     total_cost: totals.totalCost,
     total_profit: totals.totalProfit,
@@ -554,6 +655,14 @@ export function movementFromSupabase(row: any): StockMovement {
     unitPrice: totals.unitPrice,
     costPrice: totals.unitCost,
     unitCost: totals.unitCost,
+    discountType: row.discount_type || (totals.discountAmount > 0 ? 'fixed' : 'none'),
+    discountAmount: totals.discountAmount,
+    discountPercent: safeNumber(row.discount_percent, 0),
+    subtotalAmount: totals.subtotalAmount,
+    finalAmount: totals.totalAmount,
+    saleSubtotal: safeNumber(row.sale_subtotal, totals.subtotalAmount),
+    saleDiscountTotal: safeNumber(row.sale_discount_total, totals.discountAmount),
+    saleFinalTotal: safeNumber(row.sale_final_total, totals.totalAmount),
     totalValue: totals.totalAmount,
     totalAmount: totals.totalAmount,
     totalCost: totals.totalCost,
@@ -567,6 +676,78 @@ export function movementFromSupabase(row: any): StockMovement {
     updatedAt: row.updated_at || row.created_at || row.createdAt || new Date().toISOString(),
   };
   return mv as StockMovement;
+}
+
+export function cashOutflowToSupabase(outflow: CashOutflow): any {
+  return {
+    id: outflow.id,
+    description: outflow.description,
+    amount: safeNumber(outflow.amount, 0),
+    category_id: outflow.categoryId || null,
+    category_name: outflow.categoryName,
+    payment_method: outflow.paymentMethod,
+    outflow_date: outflow.outflowDate,
+    notes: outflow.notes || null,
+    receipt_url: outflow.receiptUrl || null,
+    receipt_file_name: outflow.receiptFileName || null,
+    receipt_mime_type: outflow.receiptMimeType || null,
+    receipt_size: outflow.receiptSize || null,
+    created_at: outflow.createdAt,
+    updated_at: outflow.updatedAt,
+  };
+}
+
+export function cashOutflowFromAny(row: any): CashOutflow {
+  const now = new Date().toISOString();
+  return {
+    id: row?.id || generateId('outflow'),
+    description: String(row?.description || '').trim(),
+    amount: safeNumber(row?.amount, 0),
+    categoryId: row?.categoryId ?? row?.category_id ?? null,
+    categoryName: String(row?.categoryName ?? row?.category_name ?? 'Outros').trim() || 'Outros',
+    paymentMethod: String(row?.paymentMethod ?? row?.payment_method ?? '').trim() || 'Outro',
+    outflowDate: row?.outflowDate || row?.outflow_date || now,
+    notes: row?.notes || null,
+    receiptUrl: row?.receiptUrl ?? row?.receipt_url ?? null,
+    receiptFileName: row?.receiptFileName ?? row?.receipt_file_name ?? null,
+    receiptMimeType: row?.receiptMimeType ?? row?.receipt_mime_type ?? null,
+    receiptSize: row?.receiptSize ?? row?.receipt_size ?? null,
+    createdAt: row?.createdAt || row?.created_at || now,
+    updatedAt: row?.updatedAt || row?.updated_at || now,
+  };
+}
+
+export function cashOutflowCategoryToSupabase(category: CashOutflowCategory): any {
+  return {
+    id: category.id,
+    name: category.name,
+    is_active: category.isActive,
+    sort_order: safeNumber(category.sortOrder, 0),
+    created_at: category.createdAt,
+    updated_at: category.updatedAt,
+  };
+}
+
+export function cashOutflowCategoryFromAny(row: any, index = 0): CashOutflowCategory {
+  return normalizeCashOutflowCategory(row, index);
+}
+
+async function upsertCashOutflowToSupabase(outflow: CashOutflow): Promise<void> {
+  if (!isSupabaseConfigured || !supabase) return;
+  const { error } = await supabase.from('cash_outflows').upsert([cashOutflowToSupabase(outflow)]);
+  if (error) throw error;
+}
+
+async function deleteCashOutflowInSupabase(id: string): Promise<void> {
+  if (!isSupabaseConfigured || !supabase) return;
+  const { error } = await supabase.from('cash_outflows').delete().eq('id', id);
+  if (error) throw error;
+}
+
+async function upsertCashOutflowCategoryToSupabase(category: CashOutflowCategory): Promise<void> {
+  if (!isSupabaseConfigured || !supabase) return;
+  const { error } = await supabase.from('cash_outflow_categories').upsert([cashOutflowCategoryToSupabase(category)]);
+  if (error) throw error;
 }
 
 function getCatalogItemsLocal(): string[] {
@@ -792,6 +973,14 @@ export async function registerSale(params: {
   paymentStatus?: 'paid' | 'pending';
   paymentMethod?: string | null;
   saleGroupId?: string;
+  discountType?: 'fixed' | 'percent' | 'none';
+  discountAmount?: number;
+  discountPercent?: number;
+  subtotalAmount?: number;
+  finalAmount?: number;
+  saleSubtotal?: number;
+  saleDiscountTotal?: number;
+  saleFinalTotal?: number;
 }): Promise<StockMovement | null> {
   const {
     productId,
@@ -804,6 +993,14 @@ export async function registerSale(params: {
     paymentStatus = 'paid',
     paymentMethod = null,
     saleGroupId,
+    discountType = 'none',
+    discountAmount = 0,
+    discountPercent = 0,
+    subtotalAmount,
+    finalAmount,
+    saleSubtotal,
+    saleDiscountTotal,
+    saleFinalTotal,
   } = params;
   if (!productId) throw new Error('productId required');
   if (!quantity || Number(quantity) <= 0) throw new Error('quantity must be > 0');
@@ -838,6 +1035,14 @@ export async function registerSale(params: {
       paymentMethod: paymentStatus === 'paid' ? (paymentMethod || '') : '',
       paidAt: paymentStatus === 'paid' ? new Date().toISOString() : null,
       saleGroupId: saleGroupId || generateId('sale'),
+      discountType,
+      discountAmount,
+      discountPercent,
+      subtotalAmount,
+      finalAmount,
+      saleSubtotal,
+      saleDiscountTotal,
+      saleFinalTotal,
       userId: userId || 'system',
     } as any);
   } finally {
@@ -898,6 +1103,182 @@ export async function markMovementAsPaid(
   movements[index] = updated;
   saveMovements(movements);
   return updated;
+}
+
+export function loadCashOutflows(): CashOutflow[] {
+  return getCashOutflows();
+}
+
+export function loadCashOutflowCategories(): CashOutflowCategory[] {
+  const categories = getCashOutflowCategories();
+  if (!safeGetLocalStorage(CASH_OUTFLOW_CATEGORIES_KEY)) {
+    saveCashOutflowCategories(categories);
+  }
+  return categories;
+}
+
+export async function createCashOutflow(data: Omit<CashOutflow, 'id' | 'createdAt' | 'updatedAt'>): Promise<CashOutflow> {
+  const description = String(data.description || '').trim();
+  const amount = safeNumber(data.amount, 0);
+  if (!description) throw new Error('Descricao obrigatoria.');
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error('Valor precisa ser maior que zero.');
+  if (!data.categoryName) throw new Error('Categoria obrigatoria.');
+  if (!data.outflowDate || !Number.isFinite(new Date(data.outflowDate).getTime())) throw new Error('Data invalida.');
+
+  const now = new Date().toISOString();
+  const outflow: CashOutflow = {
+    ...data,
+    id: generateId('outflow'),
+    description,
+    amount,
+    paymentMethod: String(data.paymentMethod || 'Outro'),
+    createdAt: now,
+    updatedAt: now,
+  };
+  const outflows = getCashOutflows();
+  outflows.unshift(outflow);
+  saveCashOutflows(outflows);
+  if (isSupabaseConfigured && !suppressRemoteSync) {
+    try {
+      await upsertCashOutflowToSupabase(outflow);
+    } catch (error) {
+      console.error('[CASH OUTFLOW SAVE ERROR]', error);
+      throw error;
+    }
+  }
+  return outflow;
+}
+
+export async function updateCashOutflow(id: string, data: Partial<CashOutflow>): Promise<CashOutflow> {
+  const outflows = getCashOutflows();
+  const index = outflows.findIndex(outflow => outflow.id === id);
+  if (index === -1) throw new Error('Saida nao encontrada.');
+  const updated = cashOutflowFromAny({
+    ...outflows[index],
+    ...data,
+    id,
+    updatedAt: new Date().toISOString(),
+  });
+  if (!updated.description.trim()) throw new Error('Descricao obrigatoria.');
+  if (!Number.isFinite(updated.amount) || updated.amount <= 0) throw new Error('Valor precisa ser maior que zero.');
+  if (!updated.categoryName) throw new Error('Categoria obrigatoria.');
+  if (!updated.outflowDate || !Number.isFinite(new Date(updated.outflowDate).getTime())) throw new Error('Data invalida.');
+  outflows[index] = updated;
+  saveCashOutflows(outflows);
+  if (isSupabaseConfigured && !suppressRemoteSync) {
+    try {
+      await upsertCashOutflowToSupabase(updated);
+    } catch (error) {
+      console.error('[CASH OUTFLOW SAVE ERROR]', error);
+      throw error;
+    }
+  }
+  return updated;
+}
+
+export async function deleteCashOutflow(id: string): Promise<boolean> {
+  const outflows = getCashOutflows();
+  const filtered = outflows.filter(outflow => outflow.id !== id);
+  if (filtered.length === outflows.length) return false;
+  saveCashOutflows(filtered);
+  if (isSupabaseConfigured && !suppressRemoteSync) {
+    try {
+      await deleteCashOutflowInSupabase(id);
+    } catch (error) {
+      console.error('[CASH OUTFLOW DELETE ERROR]', error);
+      throw error;
+    }
+  }
+  return true;
+}
+
+export async function createCashOutflowCategory(name: string): Promise<CashOutflowCategory> {
+  const trimmed = String(name || '').trim();
+  if (!trimmed) throw new Error('Nome da categoria obrigatorio.');
+  const categories = getCashOutflowCategories();
+  const existing = categories.find(category => category.name.toLowerCase() === trimmed.toLowerCase());
+  if (existing) {
+    if (!existing.isActive) return updateCashOutflowCategory(existing.id, { isActive: true, name: trimmed });
+    throw new Error('Categoria ja existe.');
+  }
+  const now = new Date().toISOString();
+  const category: CashOutflowCategory = {
+    id: generateId('outcat'),
+    name: trimmed,
+    isActive: true,
+    sortOrder: categories.length,
+    createdAt: now,
+    updatedAt: now,
+  };
+  categories.push(category);
+  saveCashOutflowCategories(categories);
+  if (isSupabaseConfigured && !suppressRemoteSync) {
+    try {
+      await upsertCashOutflowCategoryToSupabase(category);
+    } catch (error) {
+      console.error('[CASH OUTFLOW SAVE ERROR]', error);
+      throw error;
+    }
+  }
+  return category;
+}
+
+export async function updateCashOutflowCategory(id: string, data: Partial<CashOutflowCategory>): Promise<CashOutflowCategory> {
+  const categories = getCashOutflowCategories();
+  const index = categories.findIndex(category => category.id === id);
+  if (index === -1) throw new Error('Categoria nao encontrada.');
+  const updated = normalizeCashOutflowCategory({
+    ...categories[index],
+    ...data,
+    id,
+    updatedAt: new Date().toISOString(),
+  }, index);
+  categories[index] = updated;
+  saveCashOutflowCategories(categories);
+  if (isSupabaseConfigured && !suppressRemoteSync) {
+    try {
+      await upsertCashOutflowCategoryToSupabase(updated);
+    } catch (error) {
+      console.error('[CASH OUTFLOW SAVE ERROR]', error);
+      throw error;
+    }
+  }
+  return updated;
+}
+
+export async function deleteCashOutflowCategory(id: string): Promise<boolean> {
+  const categories = getCashOutflowCategories();
+  const category = categories.find(item => item.id === id);
+  if (!category) return false;
+  await updateCashOutflowCategory(id, { isActive: false });
+  return true;
+}
+
+export async function uploadCashOutflowReceipt(file: File): Promise<Pick<CashOutflow, 'receiptUrl' | 'receiptFileName' | 'receiptMimeType' | 'receiptSize'>> {
+  const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+  if (!allowedTypes.includes(file.type)) throw new Error('Comprovante deve ser JPG, PNG, WEBP ou PDF.');
+  if (file.size > 5 * 1024 * 1024) throw new Error('Comprovante deve ter no maximo 5MB.');
+  if (!isSupabaseConfigured || !supabase) throw new Error('Supabase Storage nao configurado.');
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const path = `${new Date().toISOString().slice(0, 10)}/${generateId('receipt')}_${safeName}`;
+  try {
+    const { error } = await supabase.storage.from(CASH_OUTFLOW_RECEIPTS_BUCKET).upload(path, file, {
+      cacheControl: '3600',
+      upsert: false,
+      contentType: file.type,
+    });
+    if (error) throw error;
+    const { data } = supabase.storage.from(CASH_OUTFLOW_RECEIPTS_BUCKET).getPublicUrl(path);
+    return {
+      receiptUrl: data.publicUrl,
+      receiptFileName: file.name,
+      receiptMimeType: file.type,
+      receiptSize: file.size,
+    };
+  } catch (error) {
+    console.error('[CASH OUTFLOW RECEIPT UPLOAD ERROR]', error);
+    throw error;
+  }
 }
 // Movement operations
 export function createMovement(data: Omit<StockMovement, 'id' | 'createdAt' | 'previousQuantity' | 'newQuantity'>): StockMovement | null {
@@ -997,7 +1378,15 @@ export function createMovement(data: Omit<StockMovement, 'id' | 'createdAt' | 'p
   products[productIndex] = product;
   saveProducts(products);
 
-    const totalAmount = safeNumber(unitPrice * qty, 0);
+    const subtotalAmount = safeNumber((data as any).subtotalAmount ?? (unitPrice * qty), 0);
+    const discountAmount = Math.min(subtotalAmount, Math.max(0, safeNumber((data as any).discountAmount, 0)));
+    const finalAmount = Math.max(0, safeNumber((data as any).finalAmount ?? (subtotalAmount - discountAmount), subtotalAmount - discountAmount));
+    const discountType = (data as any).discountType ?? (discountAmount > 0 ? 'fixed' : 'none');
+    const discountPercent = safeNumber((data as any).discountPercent, 0);
+    const saleSubtotal = safeNumber((data as any).saleSubtotal, subtotalAmount);
+    const saleDiscountTotal = safeNumber((data as any).saleDiscountTotal, discountAmount);
+    const saleFinalTotal = safeNumber((data as any).saleFinalTotal, finalAmount);
+    const totalAmount = finalAmount;
     const totalCost = safeNumber(unitCost * qty, 0);
     const totalProfit = safeNumber(totalAmount - totalCost, 0);
 
@@ -1010,6 +1399,14 @@ export function createMovement(data: Omit<StockMovement, 'id' | 'createdAt' | 'p
       unitPrice,
       costPrice: unitCost,
       unitCost,
+      discountType,
+      discountAmount,
+      discountPercent,
+      subtotalAmount,
+      finalAmount,
+      saleSubtotal,
+      saleDiscountTotal,
+      saleFinalTotal,
       totalValue: totalAmount,
       totalAmount,
       totalCost,
@@ -1253,6 +1650,8 @@ export async function loadRemoteToLocal(): Promise<void> {
     let remoteAlerts = null;
     let remoteStoreConfig = null;
     let remoteCatalogConfig = null;
+    let remoteCashOutflows = null;
+    let remoteCashOutflowCategories = null;
     try {
       const { data, error } = await supabase.from('products').select('*');
       if (error) console.error('[SUPABASE PRODUCTS ERROR]', error);
@@ -1278,6 +1677,16 @@ export async function loadRemoteToLocal(): Promise<void> {
       if (error) console.error('[SUPABASE LOAD ERROR]', error);
       remoteAlerts = data;
     } catch (error) { console.error('[SUPABASE LOAD ERROR]', error); remoteAlerts = null; }
+    try {
+      const { data, error } = await supabase.from('cash_outflows').select('*').order('outflow_date', { ascending: false });
+      if (error) console.error('[CASH OUTFLOW LOAD ERROR]', error);
+      remoteCashOutflows = data;
+    } catch (error) { console.error('[CASH OUTFLOW LOAD ERROR]', error); remoteCashOutflows = null; }
+    try {
+      const { data, error } = await supabase.from('cash_outflow_categories').select('*').order('sort_order', { ascending: true });
+      if (error) console.error('[CASH OUTFLOW LOAD ERROR]', error);
+      remoteCashOutflowCategories = data;
+    } catch (error) { console.error('[CASH OUTFLOW LOAD ERROR]', error); remoteCashOutflowCategories = null; }
     try {
       const { data, error } = await supabase.from('store_config').select('*').eq('id', 'default').maybeSingle();
       if (error) console.error('[SUPABASE LOAD ERROR]', error);
@@ -1311,6 +1720,14 @@ export async function loadRemoteToLocal(): Promise<void> {
         read: !!alert.read,
       })));
     }
+    if (Array.isArray(remoteCashOutflows)) {
+      saveCashOutflows((remoteCashOutflows || []).map(cashOutflowFromAny));
+    }
+    if (Array.isArray(remoteCashOutflowCategories) && remoteCashOutflowCategories.length > 0) {
+      saveCashOutflowCategories((remoteCashOutflowCategories || []).map(cashOutflowCategoryFromAny));
+    } else if (!safeGetLocalStorage(CASH_OUTFLOW_CATEGORIES_KEY)) {
+      saveCashOutflowCategories(getDefaultCashOutflowCategories());
+    }
     if (remoteStoreConfig) {
       safeSetLocalStorage(STORE_CONFIG_KEY, JSON.stringify({
         storeName: remoteStoreConfig.store_name || 'FRAZON STORE',
@@ -1340,6 +1757,8 @@ export async function exportState(): Promise<Record<string, any>> {
     brands: getBrands(),
     categories: getCategories(),
     alerts: getAlerts(),
+    cashOutflows: getCashOutflows(),
+    cashOutflowCategories: getCashOutflowCategories(),
     storeConfig: getStoreConfig(),
     catalog: {
       items: getCatalogItemsLocal(),
@@ -1353,7 +1772,9 @@ export async function exportState(): Promise<Record<string, any>> {
       if (productsError) console.error('[SUPABASE PRODUCTS ERROR]', productsError);
       const { data: remoteMovements, error: movementsError } = await supabase.from('movements').select('*');
       if (movementsError) console.error('[SUPABASE MOVEMENTS ERROR]', movementsError);
-      state.remote = { products: remoteProducts || null, movements: remoteMovements || null };
+      const { data: remoteCashOutflows, error: cashOutflowsError } = await supabase.from('cash_outflows').select('*');
+      if (cashOutflowsError) console.error('[CASH OUTFLOW LOAD ERROR]', cashOutflowsError);
+      state.remote = { products: remoteProducts || null, movements: remoteMovements || null, cashOutflows: remoteCashOutflows || null };
     } catch (error) { console.error('[SUPABASE LOAD ERROR]', error); }
   }
   return state;
@@ -1362,13 +1783,15 @@ export async function exportState(): Promise<Record<string, any>> {
 // Import full state JSON: writes to local cache and to remote (if configured).
 export async function importState(state: Record<string, any>, options?: { overwriteRemote?: boolean }): Promise<void> {
   if (!state) return;
-  const { products, movements, brands, categories, alerts, storeConfig, catalog } = state as any;
+  const { products, movements, brands, categories, alerts, cashOutflows, cashOutflowCategories, storeConfig, catalog } = state as any;
 
   if (Array.isArray(products)) saveProducts(products as Product[]);
   if (Array.isArray(movements)) saveMovements(movements as StockMovement[]);
   if (Array.isArray(brands)) saveBrands(brands as Brand[]);
   if (Array.isArray(categories)) saveCategories(categories as Category[]);
   if (Array.isArray(alerts)) saveAlerts(alerts as Alert[]);
+  if (Array.isArray(cashOutflows)) saveCashOutflows((cashOutflows || []).map(cashOutflowFromAny));
+  if (Array.isArray(cashOutflowCategories)) saveCashOutflowCategories((cashOutflowCategories || []).map(cashOutflowCategoryFromAny));
   if (storeConfig) safeSetLocalStorage(STORE_CONFIG_KEY, JSON.stringify(storeConfig));
   if (catalog?.items) safeSetLocalStorage(CATALOG_ITEMS_KEY, JSON.stringify(catalog.items));
   if (catalog?.config) safeSetLocalStorage(CATALOG_CONFIG_KEY, JSON.stringify(catalog.config));
@@ -1391,6 +1814,15 @@ export async function importState(state: Record<string, any>, options?: { overwr
         const { error } = await supabase.from('movements').upsert((movements || []).map(movementToSupabase));
         if (error) console.error('[SUPABASE MOVEMENTS ERROR]', error);
       } catch (error) { console.error('[SUPABASE MOVEMENTS ERROR]', error); }
+      try {
+        const { error } = await supabase.from('cash_outflows').upsert((cashOutflows || []).map(cashOutflowFromAny).map(cashOutflowToSupabase));
+        if (error) console.error('[CASH OUTFLOW SAVE ERROR]', error);
+      } catch (error) { console.error('[CASH OUTFLOW SAVE ERROR]', error); }
+      try {
+        const localOutflowCategories = (cashOutflowCategories || getCashOutflowCategories()).map(cashOutflowCategoryFromAny);
+        const { error } = await supabase.from('cash_outflow_categories').upsert(localOutflowCategories.map(cashOutflowCategoryToSupabase));
+        if (error) console.error('[CASH OUTFLOW SAVE ERROR]', error);
+      } catch (error) { console.error('[CASH OUTFLOW SAVE ERROR]', error); }
       await saveAppStateToSupabase(getFullLocalState());
     } else {
       // Merge: only insert when remote empty

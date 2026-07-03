@@ -18,11 +18,13 @@ import { PublicCatalogPage } from './pages/PublicCatalogPage';
 import { AdminCatalogPage } from './pages/AdminCatalogPage';
 import { CashierPage } from './pages/CashierPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { PendingPage } from './pages/PendingPage';
+import { CashOutflowsPage } from './pages/CashOutflowsPage';
 
 import { Sidebar } from './components/layout/Sidebar';
 import { TopBar } from './components/layout/TopBar';
 
-type Page = 'dashboard' | 'products' | 'movements' | 'alerts' | 'reports' | 'brands' | 'notifications' | 'admin_catalog' | 'cashier' | 'settings';
+type Page = 'dashboard' | 'products' | 'movements' | 'alerts' | 'reports' | 'brands' | 'notifications' | 'admin_catalog' | 'cashier' | 'cash_outflows' | 'settings';
 
 function safeGetLocalStorage(key: string): string | null {
   try {
@@ -41,9 +43,10 @@ const pageConfig: Record<Page, { title: string; subtitle?: string }> = {
   reports: { title: 'Relatórios', subtitle: 'Exporte dados em PDF, CSV ou Excel' },
   settings: { title: 'Configurações', subtitle: 'Backup e sincronização' },
   brands: { title: 'Catálogo', subtitle: 'Marcas e categorias' },
-  notifications: { title: 'Notificações', subtitle: 'Central de alertas' },
+  notifications: { title: 'Pendentes', subtitle: 'Vendas aguardando pagamento' },
   admin_catalog: { title: 'Catálogo', subtitle: 'Gerencie o catálogo público' },
   cashier: { title: 'Caixa', subtitle: 'Registrar vendas do dia' },
+  cash_outflows: { title: 'Saídas', subtitle: 'Controle de dinheiro que saiu da loja' },
 };
 
 function getPageFromPath(pathname: string): Page {
@@ -51,8 +54,9 @@ function getPageFromPath(pathname: string): Page {
   if (segments.length === 0) return 'dashboard';
   const page = segments[0];
   if (page === 'caixa') return 'cashier';
+  if (page === 'saidas') return 'cash_outflows';
   if (page === 'settings' || page === 'configuracoes') return 'settings';
-  if (['dashboard', 'products', 'movements', 'alerts', 'reports', 'brands', 'notifications', 'cashier'].includes(page)) {
+  if (['dashboard', 'products', 'movements', 'alerts', 'reports', 'brands', 'notifications', 'cashier', 'cash_outflows'].includes(page)) {
     return page as Page;
   }
   if (page === 'admin' && segments[1] === 'catalogo') {
@@ -85,6 +89,10 @@ function PrivateLayout() {
     }
     if (page === 'cashier') {
       navigate('/caixa');
+      return;
+    }
+    if (page === 'cash_outflows') {
+      navigate('/saidas');
       return;
     }
     const target = page === 'dashboard' ? '/dashboard' : `/${page}`;
@@ -187,8 +195,9 @@ function App() {
           <Route path="products" element={<ProductsPage />} />
           <Route path="movements" element={<MovementsPage />} />
           <Route path="alerts" element={<AlertsPage />} />
-          <Route path="notifications" element={<AlertsPage />} />
+          <Route path="notifications" element={<PendingPage />} />
           <Route path="reports" element={<ReportsPage />} />
+          <Route path="saidas" element={<CashOutflowsPage />} />
           <Route path="brands" element={<BrandsPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="admin/catalogo" element={<AdminCatalogPage />} />

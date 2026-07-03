@@ -2,12 +2,13 @@ import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   Download, FileText, FileSpreadsheet,
-  TrendingUp, Package, DollarSign, BarChart3
+  TrendingUp, Package, DollarSign, BarChart3, Receipt
 } from 'lucide-react';
 import { endOfDay, endOfMonth, format, isValid, parseISO, startOfDay, startOfMonth } from 'date-fns';
 import { useStore } from '../store/useStore';
 import { Badge } from '../components/ui/Badge';
 import toast from 'react-hot-toast';
+import { CashOutflow } from '../types';
 
 type PeriodFilter = 'general' | 'date' | 'month';
 
@@ -21,10 +22,12 @@ function movementTotals(m: any) {
   const qty = safeNumber(m?.quantity, 0);
   const unitPrice = safeNumber(m?.unitPrice ?? m?.unit_price ?? m?.variant?.salePrice ?? m?.product?.salePrice, 0);
   const unitCost = safeNumber(m?.unitCost ?? m?.unit_cost ?? m?.costPrice ?? m?.cost_price ?? m?.variant?.costPrice ?? m?.variant?.cost ?? m?.product?.costPrice, 0);
-  const totalAmount = safeNumber(m?.totalAmount ?? m?.total_amount ?? m?.totalValue ?? m?.total_value, unitPrice * qty);
+  const subtotalAmount = safeNumber(m?.subtotalAmount ?? m?.subtotal_amount, unitPrice * qty);
+  const discountAmount = safeNumber(m?.discountAmount ?? m?.discount_amount, 0);
+  const totalAmount = safeNumber(m?.finalAmount ?? m?.final_amount ?? m?.totalAmount ?? m?.total_amount ?? m?.totalValue ?? m?.total_value, subtotalAmount - discountAmount);
   const totalCost = safeNumber(m?.totalCost ?? m?.total_cost, unitCost * qty);
   const totalProfit = safeNumber(m?.totalProfit ?? m?.total_profit ?? m?.profit, totalAmount - totalCost);
-  return { qty, unitPrice, unitCost, totalAmount, totalCost, totalProfit };
+  return { qty, unitPrice, unitCost, subtotalAmount, discountAmount, totalAmount, totalCost, totalProfit };
 }
 
 function formatMoney(value: any): string {
@@ -40,11 +43,48 @@ function displayCustomerName(value: any): string {
   return name || 'Cliente não informado';
 }
 
+function displayReportField(value: any): string {
+  const text = String(value || '').trim();
+  return text || 'Nao informado';
+}
+
+function getPaymentStatusLabel(movement: any): string {
+  const status = movement?.paymentStatus ?? movement?.payment_status ?? 'paid';
+  if (status === 'pending') return 'Pendente';
+  if (status === 'cancelled') return 'Cancelado';
+  return 'Pago';
+}
+
+function getVariantLabel(movement: any): string {
+  return displayReportField(
+    movement?.variantLabel ||
+    movement?.variant_label ||
+    movement?.variantName ||
+    movement?.variant_name ||
+    (movement?.variant ? [movement.variant.size, movement.variant.color].filter(Boolean).join(' - ') : '')
+  );
+}
+
 function parseMovementDate(movement: any): Date | null {
   const rawDate = movement?.createdAt ?? movement?.created_at;
   if (!rawDate) return null;
   const parsed = typeof rawDate === 'string' ? parseISO(rawDate) : new Date(rawDate);
   return isValid(parsed) ? parsed : null;
+}
+
+function parseFinancialMovementDate(movement: any): Date | null {
+  const status = movement?.paymentStatus ?? movement?.payment_status ?? 'paid';
+  const rawDate = status === 'paid'
+    ? (movement?.paidAt ?? movement?.paid_at ?? movement?.createdAt ?? movement?.created_at)
+    : (movement?.createdAt ?? movement?.created_at);
+  if (!rawDate) return null;
+  const parsed = typeof rawDate === 'string' ? parseISO(rawDate) : new Date(rawDate);
+  return isValid(parsed) ? parsed : null;
+}
+
+function parseOutflowDate(outflow: CashOutflow): Date | null {
+  const parsed = outflow.outflowDate ? parseISO(outflow.outflowDate) : null;
+  return parsed && isValid(parsed) ? parsed : null;
 }
 
 function isSaleMovement(movement: any): boolean {
@@ -62,7 +102,7 @@ const typeMap: Record<string, string> = {
 };
 
 export function ReportsPage() {
-  const { products, movements } = useStore();
+  const { products, movements, cashOutflows } = useStore();
   const [loadingReport, setLoadingReport] = useState<string | null>(null);
   const [periodFilter, setPeriodFilter] = useState<PeriodFilter>('general');
   const [selectedDate, setSelectedDate] = useState(format(new Date(), 'yyyy-MM-dd'));
@@ -116,19 +156,62 @@ export function ReportsPage() {
     [filteredMovements]
   );
 
+  const paidSalesInPeriod = useMemo(() => {
+    return movements.filter(movement => {
+      if (!isSaleMovement(movement)) return false;
+      const status = (movement as any).paymentStatus ?? (movement as any).payment_status ?? 'paid';
+      if (status !== 'paid') return false;
+      if (!activePeriod || !activePeriod.start || !activePeriod.end) return true;
+      const date = parseFinancialMovementDate(movement);
+      return !!date && date >= activePeriod.start && date <= activePeriod.end;
+    });
+  }, [activePeriod, movements]);
+
+  const pendingSalesInPeriod = useMemo(() => {
+    return movements.filter(movement => {
+      if (!isSaleMovement(movement)) return false;
+      const status = (movement as any).paymentStatus ?? (movement as any).payment_status ?? 'paid';
+      if (status !== 'pending') return false;
+      if (!activePeriod || !activePeriod.start || !activePeriod.end) return true;
+      const date = parseMovementDate(movement);
+      return !!date && date >= activePeriod.start && date <= activePeriod.end;
+    });
+  }, [activePeriod, movements]);
+
+  const filteredOutflows = useMemo(() => {
+    if (!activePeriod || !activePeriod.start || !activePeriod.end) return cashOutflows;
+    return cashOutflows.filter(outflow => {
+      const date = parseOutflowDate(outflow);
+      return !!date && date >= activePeriod.start! && date <= activePeriod.end!;
+    });
+  }, [activePeriod, cashOutflows]);
+
   const filteredTotals = useMemo(() => {
-    return filteredSales.reduce(
+    return paidSalesInPeriod.reduce(
       (acc, movement) => {
         const values = movementTotals(movement);
         acc.total += values.totalAmount;
         acc.cost += values.totalCost;
         acc.profit += values.totalProfit;
+        acc.discount += values.discountAmount;
         acc.items += values.qty;
         return acc;
       },
-      { total: 0, cost: 0, profit: 0, items: 0 }
+      { total: 0, cost: 0, profit: 0, discount: 0, items: 0 }
     );
-  }, [filteredSales]);
+  }, [paidSalesInPeriod]);
+
+  const totalPending = useMemo(
+    () => pendingSalesInPeriod.reduce((acc, movement) => acc + movementTotals(movement).totalAmount, 0),
+    [pendingSalesInPeriod]
+  );
+
+  const totalOutflows = useMemo(
+    () => filteredOutflows.reduce((acc, outflow) => acc + safeNumber(outflow.amount, 0), 0),
+    [filteredOutflows]
+  );
+
+  const finalBalance = filteredTotals.total - totalOutflows;
 
   const totalStock = products.reduce((acc, p) => acc + safeNumber(p.totalQuantity, 0), 0);
 
@@ -147,6 +230,34 @@ export function ReportsPage() {
     a.click();
     URL.revokeObjectURL(url);
   };
+
+  const downloadSectionedCSV = (filename: string, sections: { title: string; headers: string[]; rows: string[][] }[]) => {
+    const bom = '\uFEFF';
+    const csv = bom + sections
+      .flatMap(section => [[section.title], section.headers, ...section.rows, []])
+      .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(';'))
+      .join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${filename}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const outflowExportRows = () => filteredOutflows.map(outflow => {
+    const date = parseOutflowDate(outflow);
+    return [
+      date ? format(date, 'dd/MM/yyyy') : '',
+      outflow.description,
+      outflow.categoryName,
+      `R$ ${formatMoney(outflow.amount)}`,
+      outflow.paymentMethod,
+      outflow.notes || '',
+      outflow.receiptUrl || '',
+    ];
+  });
 
   const exportProductsCSV = async () => {
     setLoadingReport('products_csv');
@@ -198,20 +309,29 @@ export function ReportsPage() {
   const exportMovementsCSV = async () => {
     setLoadingReport('movements_csv');
     await new Promise(r => setTimeout(r, 600));
-    const headers = ['ID', 'Produto', 'Cliente', 'Tipo', 'Quantidade', 'Preço Unit.', 'Valor Total', 'Custo Total', 'Lucro', 'Estoque Anterior', 'Estoque Novo', 'Motivo', 'Observações', 'Data'];
+    const movementHeaders = ['ID', 'Produto', 'Cliente', 'Tamanho', 'Cor', 'Variacao', 'Tipo', 'Quantidade', 'Preco Unit.', 'Subtotal', 'Desconto', 'Total Final', 'Custo Total', 'Lucro', 'Status Pagamento', 'Forma Pagamento', 'Data Pagamento', 'Estoque Anterior', 'Estoque Novo', 'Motivo', 'Observacoes', 'Data'];
     const rows = filteredMovements.map(m => {
       const values = movementTotals(m);
       const movementDate = parseMovementDate(m);
+      const paidAt = (m as any).paidAt ?? (m as any).paid_at;
       return [
         m.id,
         m.product?.name || m.productName || m.productId,
         displayCustomerName(m.customerName ?? (m as any).customer_name),
+        displayReportField((m as any).size ?? m.variant?.size),
+        displayReportField((m as any).color ?? m.variant?.color),
+        getVariantLabel(m),
         typeMap[m.type] || m.type,
         String(values.qty),
         `R$ ${formatMoney(values.unitPrice)}`,
+        `R$ ${formatMoney(values.subtotalAmount)}`,
+        `R$ ${formatMoney(values.discountAmount)}`,
         `R$ ${formatMoney(values.totalAmount)}`,
         `R$ ${formatMoney(values.totalCost)}`,
         `R$ ${formatMoney(values.totalProfit)}`,
+        getPaymentStatusLabel(m),
+        displayReportField((m as any).paymentMethod ?? (m as any).payment_method),
+        paidAt ? format(new Date(paidAt), 'dd/MM/yyyy HH:mm') : '',
         String(safeNumber(m.previousQuantity, 0)),
         String(safeNumber(m.newQuantity, 0)),
         m.reason,
@@ -219,9 +339,29 @@ export function ReportsPage() {
         movementDate ? format(movementDate, 'dd/MM/yyyy HH:mm') : '',
       ];
     });
-    generateCSV(reportFilename('relatorio'), headers, rows);
+    downloadSectionedCSV(reportFilename('relatorio-completo'), [
+      {
+        title: 'Resumo financeiro',
+        headers: ['Total vendido pago', 'Total pendente', 'Saidas', 'Descontos', 'Saldo final'],
+        rows: [[formatBRL(filteredTotals.total), formatBRL(totalPending), formatBRL(totalOutflows), formatBRL(filteredTotals.discount), formatBRL(finalBalance)]],
+      },
+      { title: 'Vendas e movimentacoes', headers: movementHeaders, rows },
+      {
+        title: 'Saidas',
+        headers: ['Data', 'Descricao', 'Categoria', 'Valor', 'Forma de pagamento', 'Observacao', 'Comprovante URL'],
+        rows: outflowExportRows(),
+      },
+    ]);
     setLoadingReport(null);
-    toast.success('Relatório de movimentações exportado!');
+    toast.success('Relatório completo exportado!');
+  };
+
+  const exportOutflowsCSV = async () => {
+    setLoadingReport('outflows_csv');
+    await new Promise(r => setTimeout(r, 400));
+    generateCSV(reportFilename('saidas'), ['Data', 'Descricao', 'Categoria', 'Valor', 'Forma de pagamento', 'Observacao', 'Comprovante URL'], outflowExportRows());
+    setLoadingReport(null);
+    toast.success('Relatório de saídas exportado!');
   };
 
   const exportStockSummaryCSV = async () => {
@@ -308,7 +448,16 @@ export function ReportsPage() {
 
         autoTable(doc, {
           startY: 51,
-          head: [['Produto', 'Cliente', 'Tipo', 'Qtd', 'Valor', 'Custo', 'Lucro', 'Motivo', 'Data']],
+          head: [['Total vendido pago', 'Total pendente', 'Saidas', 'Descontos', 'Saldo final']],
+          body: [[formatBRL(filteredTotals.total), formatBRL(totalPending), formatBRL(totalOutflows), formatBRL(filteredTotals.discount), formatBRL(finalBalance)]],
+          headStyles: { fillColor: [99, 102, 241], textColor: 255, fontStyle: 'bold', fontSize: 8 },
+          bodyStyles: { fontSize: 8, textColor: [230, 230, 240] },
+          alternateRowStyles: { fillColor: [20, 20, 35] },
+        });
+
+        autoTable(doc, {
+          startY: (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 8 : 70,
+          head: [['Produto', 'Cliente', 'Tipo', 'Qtd', 'Subtotal', 'Desconto', 'Final', 'Custo', 'Lucro', 'Data']],
           body: filteredMovements.map(m => {
             const values = movementTotals(m);
             const movementDate = parseMovementDate(m);
@@ -317,14 +466,33 @@ export function ReportsPage() {
               displayCustomerName(m.customerName ?? (m as any).customer_name).substring(0, 24),
               typeMap[m.type] || m.type,
               values.qty,
+              `R$ ${safeNumber(values.subtotalAmount, 0).toFixed(2)}`,
+              `R$ ${safeNumber(values.discountAmount, 0).toFixed(2)}`,
               `R$ ${safeNumber(values.totalAmount, 0).toFixed(2)}`,
               `R$ ${safeNumber(values.totalCost, 0).toFixed(2)}`,
               `R$ ${safeNumber(values.totalProfit, 0).toFixed(2)}`,
-              String(m.reason || '').substring(0, 30),
               movementDate ? format(movementDate, 'dd/MM/yyyy HH:mm') : '',
             ];
           }),
           headStyles: { fillColor: [99, 102, 241], textColor: 255, fontStyle: 'bold', fontSize: 8 },
+          bodyStyles: { fontSize: 7, textColor: [200, 200, 220] },
+          alternateRowStyles: { fillColor: [20, 20, 35] },
+        });
+        autoTable(doc, {
+          startY: (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 8 : 130,
+          head: [['Data', 'Descricao', 'Categoria', 'Valor', 'Pagamento', 'Comprovante']],
+          body: filteredOutflows.map(outflow => {
+            const date = parseOutflowDate(outflow);
+            return [
+              date ? format(date, 'dd/MM/yyyy') : '',
+              outflow.description.substring(0, 32),
+              outflow.categoryName,
+              `R$ ${safeNumber(outflow.amount, 0).toFixed(2)}`,
+              outflow.paymentMethod,
+              outflow.receiptUrl ? 'Sim' : 'Nao',
+            ];
+          }),
+          headStyles: { fillColor: [239, 68, 68], textColor: 255, fontStyle: 'bold', fontSize: 8 },
           bodyStyles: { fontSize: 7, textColor: [200, 200, 220] },
           alternateRowStyles: { fillColor: [20, 20, 35] },
         });
@@ -381,19 +549,36 @@ export function ReportsPage() {
         XLSX.utils.book_append_sheet(wb, ws2, 'Variações');
         XLSX.writeFile(wb, `produtos_${format(new Date(), 'yyyy-MM-dd')}.xlsx`);
       } else if (type === 'movements') {
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([{
+          'Total vendido pago': safeNumber(filteredTotals.total, 0),
+          'Total pendente': safeNumber(totalPending, 0),
+          'Saidas': safeNumber(totalOutflows, 0),
+          'Descontos': safeNumber(filteredTotals.discount, 0),
+          'Saldo final': safeNumber(finalBalance, 0),
+        }]), 'Resumo financeiro');
         const data = filteredMovements.map(m => {
           const values = movementTotals(m);
           const movementDate = parseMovementDate(m);
+          const paidAt = (m as any).paidAt ?? (m as any).paid_at;
           return {
             'ID': m.id,
             'Produto': m.product?.name || m.productName || m.productId,
             'Cliente': displayCustomerName(m.customerName ?? (m as any).customer_name),
+            'Tamanho': displayReportField((m as any).size ?? m.variant?.size),
+            'Cor': displayReportField((m as any).color ?? m.variant?.color),
+            'Variacao': getVariantLabel(m),
             'Tipo': typeMap[m.type] || m.type,
             'Quantidade': values.qty,
+            'Subtotal': safeNumber(values.subtotalAmount, 0).toFixed(2),
+            'Desconto': safeNumber(values.discountAmount, 0).toFixed(2),
+            'Total Final': safeNumber(values.totalAmount, 0).toFixed(2),
             'Preço Unit.': safeNumber(values.unitPrice, 0).toFixed(2),
             'Valor Total': safeNumber(values.totalAmount, 0).toFixed(2),
             'Custo Total': safeNumber(values.totalCost, 0).toFixed(2),
             'Lucro': safeNumber(values.totalProfit, 0).toFixed(2),
+            'Status Pagamento': getPaymentStatusLabel(m),
+            'Forma Pagamento': displayReportField((m as any).paymentMethod ?? (m as any).payment_method),
+            'Data Pagamento': paidAt ? format(new Date(paidAt), 'dd/MM/yyyy HH:mm') : '',
             'Estoque Anterior': safeNumber(m.previousQuantity, 0),
             'Estoque Novo': safeNumber(m.newQuantity, 0),
             'Motivo': m.reason,
@@ -403,6 +588,18 @@ export function ReportsPage() {
         });
         const ws = XLSX.utils.json_to_sheet(data);
         XLSX.utils.book_append_sheet(wb, ws, 'Movimentações');
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filteredOutflows.map(outflow => {
+          const date = parseOutflowDate(outflow);
+          return {
+            'Data': date ? format(date, 'dd/MM/yyyy') : '',
+            'Descricao': outflow.description,
+            'Categoria': outflow.categoryName,
+            'Valor': safeNumber(outflow.amount, 0),
+            'Forma de pagamento': outflow.paymentMethod,
+            'Observacao': outflow.notes || '',
+            'Comprovante URL': outflow.receiptUrl || '',
+          };
+        })), 'Saidas');
         XLSX.writeFile(wb, `${reportFilename('relatorio')}.xlsx`);
       }
 
@@ -485,12 +682,13 @@ export function ReportsPage() {
         </div>
       </motion.div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         {[
-          { label: 'Total Vendido', value: formatBRL(filteredTotals.total), icon: <TrendingUp size={18} />, color: '#34d399' },
-          { label: 'Custo das Vendas', value: formatBRL(filteredTotals.cost), icon: <DollarSign size={18} />, color: '#fbbf24' },
-          { label: 'Lucro', value: formatBRL(filteredTotals.profit), icon: <BarChart3 size={18} />, color: '#818cf8' },
-          { label: 'Vendas / Mov.', value: `${filteredSales.length}/${filteredMovements.length}`, icon: <Package size={18} />, color: '#c084fc' },
+          { label: 'Total vendido pago', value: formatBRL(filteredTotals.total), icon: <TrendingUp size={18} />, color: '#34d399' },
+          { label: 'Saidas', value: formatBRL(totalOutflows), icon: <Receipt size={18} />, color: '#f87171' },
+          { label: 'Saldo Final', value: formatBRL(finalBalance), icon: <BarChart3 size={18} />, color: '#818cf8' },
+          { label: 'Descontos', value: formatBRL(filteredTotals.discount), icon: <DollarSign size={18} />, color: '#f59e0b' },
+          { label: 'Pendente', value: formatBRL(totalPending), icon: <Package size={18} />, color: '#c084fc' },
         ].map((s, i) => (
           <motion.div
             key={s.label}
@@ -527,7 +725,7 @@ export function ReportsPage() {
           <table className="w-full">
             <thead>
               <tr className="border-b border-white/[0.06]">
-                {['Data', 'Produto', 'Cliente', 'Tipo', 'Valor', 'Lucro'].map(header => (
+                {['Data', 'Produto', 'Cliente', 'Tipo', 'Subtotal', 'Desconto', 'Total Final', 'Lucro'].map(header => (
                   <th key={header} className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-widest text-white/30">{header}</th>
                 ))}
               </tr>
@@ -542,6 +740,8 @@ export function ReportsPage() {
                     <td className="max-w-[240px] truncate px-4 py-3 text-sm text-white/80">{movement.product?.name || movement.productName || movement.productId}</td>
                     <td className="max-w-[180px] truncate px-4 py-3 text-sm text-white/60">{displayCustomerName(movement.customerName ?? (movement as any).customer_name)}</td>
                     <td className="px-4 py-3 text-sm text-white/60">{typeMap[movement.type] || movement.type}</td>
+                    <td className="px-4 py-3 text-sm text-white/60">{formatBRL(values.subtotalAmount)}</td>
+                    <td className="px-4 py-3 text-sm text-amber-200">{formatBRL(values.discountAmount)}</td>
                     <td className="px-4 py-3 text-sm font-semibold text-white">{formatBRL(values.totalAmount)}</td>
                     <td className="px-4 py-3 text-sm text-emerald-300">{formatBRL(values.totalProfit)}</td>
                   </tr>
@@ -549,7 +749,7 @@ export function ReportsPage() {
               })}
               {filteredMovements.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-sm text-white/35">Nenhuma movimentação encontrada para o período.</td>
+                  <td colSpan={8} className="px-4 py-8 text-center text-sm text-white/35">Nenhuma movimentação encontrada para o período.</td>
                 </tr>
               )}
             </tbody>

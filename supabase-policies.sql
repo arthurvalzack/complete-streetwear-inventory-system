@@ -12,6 +12,8 @@ begin
     'categories',
     'products',
     'movements',
+    'cash_outflows',
+    'cash_outflow_categories',
     'alerts',
     'store_config',
     'catalog_config'
