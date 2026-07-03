@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import { format, parseISO } from 'date-fns';
 import { Banknote, CreditCard, DollarSign, Minus, Plus, QrCode, Search, ShoppingBag, Trash2 } from 'lucide-react';
@@ -18,7 +18,9 @@ function movementTotals(m: any) {
   const qty = safeNumber(m?.quantity, 0);
   const unitPrice = safeNumber(m?.unitPrice ?? m?.unit_price ?? m?.variant?.salePrice ?? m?.product?.salePrice, 0);
   const unitCost = safeNumber(m?.unitCost ?? m?.unit_cost ?? m?.costPrice ?? m?.cost_price ?? m?.variant?.costPrice ?? m?.variant?.cost ?? m?.product?.costPrice, 0);
-  const totalAmount = safeNumber(m?.totalAmount ?? m?.total_amount ?? m?.totalValue ?? m?.total_value, unitPrice * qty);
+  const subtotalAmount = safeNumber(m?.subtotalAmount ?? m?.subtotal_amount, unitPrice * qty);
+  const discountAmount = safeNumber(m?.discountAmount ?? m?.discount_amount, 0);
+  const totalAmount = safeNumber(m?.finalAmount ?? m?.final_amount ?? m?.totalAmount ?? m?.total_amount ?? m?.totalValue ?? m?.total_value, subtotalAmount - discountAmount);
   const totalCost = safeNumber(m?.totalCost ?? m?.total_cost, unitCost * qty);
   const totalProfit = safeNumber(m?.totalProfit ?? m?.total_profit ?? m?.profit, totalAmount - totalCost);
   return { qty, unitPrice, unitCost, totalAmount, totalCost, totalProfit };
@@ -32,6 +34,8 @@ function displayCustomerName(value: any): string {
   const name = String(value || '').trim();
   return name || 'Cliente nao informado';
 }
+
+type DiscountType = 'fixed' | 'percent';
 
 type CartItem = {
   cartItemId: string;
@@ -49,6 +53,69 @@ type CartItem = {
   stockAvailable: number;
 };
 
+type CartDiscountLine = {
+  subtotalAmount: number;
+  discountAmount: number;
+  finalAmount: number;
+};
+
+const ALL_CATEGORIES_KEY = '__all__';
+
+function normalizeCategoryKey(value: any): string {
+  return String(value || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLocaleLowerCase('pt-BR');
+}
+
+function getProductCategoryName(product: any): string {
+  const category = product?.category;
+  const candidates = [
+    typeof category === 'string' ? category : category?.name,
+    product?.categoryName,
+    product?.category_name,
+  ];
+  const categoryName = candidates.find(candidate => String(candidate || '').trim());
+  return String(categoryName || '').trim().replace(/\s+/g, ' ');
+}
+
+function roundCurrency(value: number): number {
+  return Math.round((safeNumber(value, 0) + Number.EPSILON) * 100) / 100;
+}
+
+function calculateCartDiscount(cartItems: CartItem[], discountType: DiscountType, rawDiscountValue: any) {
+  const subtotalAmount = roundCurrency(cartItems.reduce((acc, item) => acc + safeNumber(item.quantity, 0) * safeNumber(item.unitPrice, 0), 0));
+  const totalCost = roundCurrency(cartItems.reduce((acc, item) => acc + safeNumber(item.quantity, 0) * safeNumber(item.unitCost, 0), 0));
+  const totalItems = cartItems.reduce((acc, item) => acc + safeNumber(item.quantity, 0), 0);
+  const discountValue = Math.max(0, safeNumber(rawDiscountValue, 0));
+  const rawDiscount = discountType === 'percent' ? subtotalAmount * (discountValue / 100) : discountValue;
+  const discountAmount = roundCurrency(Math.min(subtotalAmount, Math.max(0, rawDiscount)));
+  const finalAmount = roundCurrency(Math.max(0, subtotalAmount - discountAmount));
+  const totalProfit = roundCurrency(finalAmount - totalCost);
+  const discountPercent = subtotalAmount > 0 ? roundCurrency((discountAmount / subtotalAmount) * 100) : 0;
+  return { subtotalAmount, discountAmount, finalAmount, totalCost, totalProfit, totalItems, discountPercent };
+}
+
+function allocateCartDiscount(cartItems: CartItem[], discountTotal: number): CartDiscountLine[] {
+  const subtotalTotal = roundCurrency(cartItems.reduce((acc, item) => acc + safeNumber(item.quantity, 0) * safeNumber(item.unitPrice, 0), 0));
+  let allocated = 0;
+  return cartItems.map((item, index) => {
+    const subtotalAmount = roundCurrency(safeNumber(item.quantity, 0) * safeNumber(item.unitPrice, 0));
+    const isLast = index === cartItems.length - 1;
+    const discountAmount = subtotalTotal <= 0
+      ? 0
+      : isLast
+        ? roundCurrency(discountTotal - allocated)
+        : roundCurrency(discountTotal * (subtotalAmount / subtotalTotal));
+    allocated = roundCurrency(allocated + discountAmount);
+    return {
+      subtotalAmount,
+      discountAmount: Math.max(0, discountAmount),
+      finalAmount: roundCurrency(Math.max(0, subtotalAmount - discountAmount)),
+    };
+  });
+}
+
 export function CashierPage() {
   const { products, movements, addMovement, removeMovement, user } = useStore();
   const [productId, setProductId] = useState<string>('');
@@ -58,8 +125,11 @@ export function CashierPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<'card' | 'pix' | 'cash'>('card');
   const [customerName, setCustomerName] = useState('');
+  const [discountType, setDiscountType] = useState<DiscountType>('fixed');
+  const [discountValue, setDiscountValue] = useState('');
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [selectedVariantsByProduct, setSelectedVariantsByProduct] = useState<Record<string, string | undefined>>({});
+  const [selectedCategoryKey, setSelectedCategoryKey] = useState(ALL_CATEGORIES_KEY);
 
   const today = format(new Date(), 'yyyy-MM-dd');
 
@@ -104,12 +174,35 @@ export function CashierPage() {
     return typeof image === 'string' && image ? image : '';
   };
 
+  const productCategories = useMemo(() => {
+    const categories = new Map<string, string>();
+    products.forEach(product => {
+      const categoryName = getProductCategoryName(product);
+      const categoryKey = normalizeCategoryKey(categoryName);
+      if (categoryKey && !categories.has(categoryKey)) {
+        categories.set(categoryKey, categoryName);
+      }
+    });
+    return Array.from(categories, ([key, label]) => ({ key, label }))
+      .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR', { sensitivity: 'base' }));
+  }, [products]);
+
+  useEffect(() => {
+    if (selectedCategoryKey === ALL_CATEGORIES_KEY) return;
+    if (!productCategories.some(category => category.key === selectedCategoryKey)) {
+      setSelectedCategoryKey(ALL_CATEGORIES_KEY);
+    }
+  }, [productCategories, selectedCategoryKey]);
+
   const productCards = useMemo(() => {
     const normalizedSearch = searchTerm.trim().toLowerCase();
     return products
       .filter(product => {
-        const searchable = `${product.name || ''} ${product.brand?.name || ''} ${product.category?.name || ''}`.toLowerCase();
-        return !normalizedSearch || searchable.includes(normalizedSearch);
+        const categoryName = getProductCategoryName(product);
+        const categoryKey = normalizeCategoryKey(categoryName);
+        const matchesCategory = selectedCategoryKey === ALL_CATEGORIES_KEY || categoryKey === selectedCategoryKey;
+        const searchable = `${product.name || ''} ${product.description || ''} ${product.brand?.name || ''} ${categoryName}`.toLowerCase();
+        return matchesCategory && (!normalizedSearch || searchable.includes(normalizedSearch));
       })
       .map(product => ({
         product,
@@ -120,7 +213,13 @@ export function CashierPage() {
         price: safeNumber(product.salePrice, 0),
       }))
       .filter(item => item.quantity > 0);
-  }, [products, searchTerm]);
+  }, [products, searchTerm, selectedCategoryKey]);
+
+  const emptyProductsMessage = searchTerm.trim()
+    ? 'Nenhum produto encontrado para essa busca.'
+    : selectedCategoryKey !== ALL_CATEGORIES_KEY
+      ? 'Nenhum produto encontrado nessa categoria.'
+      : 'Nenhum produto disponivel para venda.';
 
   const getSelectedVariantForProduct = (product: any) => {
     const variants = product?.variants || [];
@@ -183,6 +282,8 @@ export function CashierPage() {
     setVariantId(undefined);
     setQuantity(1);
     setCustomerName('');
+    setDiscountType('fixed');
+    setDiscountValue('');
   };
 
   const updateCartItemQuantity = (cartItemId: string, nextQuantity: number) => {
@@ -203,12 +304,8 @@ export function CashierPage() {
   };
 
   const cartTotals = useMemo(() => {
-    const totalAmount = cartItems.reduce((acc, item) => acc + safeNumber(item.quantity, 0) * safeNumber(item.unitPrice, 0), 0);
-    const totalCost = cartItems.reduce((acc, item) => acc + safeNumber(item.quantity, 0) * safeNumber(item.unitCost, 0), 0);
-    const totalProfit = totalAmount - totalCost;
-    const totalItems = cartItems.reduce((acc, item) => acc + safeNumber(item.quantity, 0), 0);
-    return { totalAmount, totalCost, totalProfit, totalItems };
-  }, [cartItems]);
+    return calculateCartDiscount(cartItems, discountType, discountValue);
+  }, [cartItems, discountType, discountValue]);
 
   const handleCreateSale = async (status: 'paid' | 'pending' = 'paid') => {
     if (cartItems.length === 0) return toast.error('Adicione pelo menos um produto ao carrinho');
@@ -217,11 +314,25 @@ export function CashierPage() {
       toast.error('Informe o nome do cliente para registrar uma venda pendente.');
       return;
     }
+    const numericDiscountValue = safeNumber(discountValue, 0);
+    if (numericDiscountValue < 0) {
+      toast.error('O desconto nao pode ser negativo.');
+      return;
+    }
+    if (discountType === 'percent' && numericDiscountValue > 100) {
+      toast.error('O desconto percentual nao pode passar de 100%.');
+      return;
+    }
+    if (discountType === 'fixed' && numericDiscountValue > cartTotals.subtotalAmount) {
+      toast.error('O desconto nao pode ser maior que o subtotal da venda.');
+      return;
+    }
     setLoading(true);
     try {
       let catalogSyncError = '';
       const saleGroupId = `sale_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-      for (const item of cartItems) {
+      const allocatedDiscounts = allocateCartDiscount(cartItems, cartTotals.discountAmount);
+      for (const [index, item] of cartItems.entries()) {
         const currentProduct = getProducts().find(product => product.id === item.productId) || products.find(product => product.id === item.productId);
         if (!currentProduct) throw new Error(`Produto nao encontrado: ${item.productName}`);
 
@@ -247,6 +358,14 @@ export function CashierPage() {
           paymentStatus: status,
           paymentMethod: status === 'paid' ? paymentMethod : null,
           saleGroupId,
+          discountType: cartTotals.discountAmount > 0 ? discountType : 'none',
+          discountAmount: allocatedDiscounts[index]?.discountAmount || 0,
+          discountPercent: cartTotals.discountPercent,
+          subtotalAmount: allocatedDiscounts[index]?.subtotalAmount || roundCurrency(itemQuantity * unitPrice),
+          finalAmount: allocatedDiscounts[index]?.finalAmount || roundCurrency(itemQuantity * unitPrice),
+          saleSubtotal: cartTotals.subtotalAmount,
+          saleDiscountTotal: cartTotals.discountAmount,
+          saleFinalTotal: cartTotals.finalAmount,
         });
 
         if (!saved) throw new Error(`Falha ao registrar venda: ${item.productName}`);
@@ -300,11 +419,10 @@ export function CashierPage() {
   return (
     <div className="flex-1 overflow-y-auto p-6 bg-[#080912]">
       <div className="space-y-6">
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           {[
             { label: 'Vendas Hoje', value: formatBRL(totals.total), icon: <DollarSign size={18} />, accent: 'from-violet-500 to-fuchsia-500', width: 'w-4/5' },
             { label: 'Lucro Hoje', value: formatBRL(totals.profit), icon: <ShoppingBag size={18} />, accent: 'from-emerald-400 to-teal-500', width: 'w-3/5' },
-            { label: 'Ticket Medio', value: formatBRL(totals.transactions > 0 ? (totals.total / totals.transactions) : 0), icon: <CreditCard size={18} />, accent: 'from-sky-400 to-indigo-500', width: 'w-2/5' },
           ].map(metric => (
             <Card key={metric.label} className="overflow-hidden border border-white/10 bg-white/[0.045] p-5 shadow-2xl shadow-black/20 backdrop-blur-xl">
               <div className="flex items-center justify-between">
@@ -323,14 +441,39 @@ export function CashierPage() {
 
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
           <Card className="border border-white/10 bg-white/[0.035] p-5 backdrop-blur-xl">
-            <div className="mb-5 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-violet-300/70">Produtos frequentes</p>
-                <h2 className="text-lg font-semibold text-white">Escolha um produto</h2>
+            <div className="mb-5 space-y-4">
+              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-violet-300/70">Produtos frequentes</p>
+                  <h2 className="text-lg font-semibold text-white">Escolha um produto</h2>
+                </div>
+                <div className="relative w-full md:max-w-xs">
+                  <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
+                  <input value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Buscar produto" className="w-full rounded-xl border border-white/10 bg-black/20 py-2.5 pl-9 pr-3 text-sm text-white outline-none transition placeholder:text-white/25 focus:border-violet-400/60 focus:bg-white/[0.06]" />
+                </div>
               </div>
-              <div className="relative w-full md:max-w-xs">
-                <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
-                <input value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Buscar produto" className="w-full rounded-xl border border-white/10 bg-black/20 py-2.5 pl-9 pr-3 text-sm text-white outline-none transition placeholder:text-white/25 focus:border-violet-400/60 focus:bg-white/[0.06]" />
+
+              <div className="-mx-5 overflow-x-auto px-5 pb-1 [scrollbar-color:rgba(139,92,246,0.35)_transparent] [scrollbar-width:thin] md:mx-0 md:px-0">
+                <div className="flex w-max gap-2 md:w-full md:flex-wrap">
+                  {[{ key: ALL_CATEGORIES_KEY, label: 'Todos' }, ...productCategories].map(category => {
+                    const active = selectedCategoryKey === category.key;
+                    return (
+                      <button
+                        key={category.key}
+                        type="button"
+                        aria-pressed={active}
+                        onClick={() => setSelectedCategoryKey(category.key)}
+                        className={`whitespace-nowrap rounded-full border px-3.5 py-2 text-xs font-semibold transition ${
+                          active
+                            ? 'border-violet-300/70 bg-violet-500/25 text-white shadow-lg shadow-violet-950/20'
+                            : 'border-white/10 bg-white/[0.035] text-white/50 hover:border-white/20 hover:bg-white/[0.07] hover:text-white/75'
+                        }`}
+                      >
+                        {category.label}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
 
@@ -374,7 +517,7 @@ export function CashierPage() {
                     </div>
                   );
                 })}
-                {productCards.length === 0 && <div className="col-span-full rounded-2xl border border-dashed border-white/10 bg-white/[0.02] p-8 text-center text-sm text-white/35">Nenhum produto disponivel para venda.</div>}
+                {productCards.length === 0 && <div className="col-span-full rounded-2xl border border-dashed border-white/10 bg-white/[0.02] p-8 text-center text-sm text-white/35">{emptyProductsMessage}</div>}
               </div>
             </div>
           </Card>
@@ -420,9 +563,45 @@ export function CashierPage() {
               </div>
 
               <div className="mt-5 border-t border-white/10 pt-5">
-                <div className="mb-4 flex items-center justify-between">
-                  <span className="text-xs font-semibold uppercase tracking-[0.16em] text-white/40">Valor total</span>
-                  <span className="text-2xl font-bold text-white">{formatBRL(cartTotals.totalAmount)}</span>
+                <div className="mb-4 space-y-2 rounded-2xl border border-white/10 bg-black/15 p-3">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-white/45">Subtotal</span>
+                    <span className="font-semibold text-white/80">{formatBRL(cartTotals.subtotalAmount)}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-white/45">Desconto</span>
+                    <span className="font-semibold text-amber-200">- {formatBRL(cartTotals.discountAmount)}</span>
+                  </div>
+                  <div className="flex items-center justify-between border-t border-white/10 pt-2">
+                    <span className="text-xs font-semibold uppercase tracking-[0.16em] text-white/40">Total final</span>
+                    <span className="text-2xl font-bold text-white">{formatBRL(cartTotals.finalAmount)}</span>
+                  </div>
+                </div>
+                <div className="mb-4 grid grid-cols-[125px_minmax(0,1fr)] gap-2">
+                  <label className="block">
+                    <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.16em] text-white/40">Desconto</span>
+                    <select
+                      value={discountType}
+                      onChange={e => setDiscountType(e.target.value as DiscountType)}
+                      className="w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2.5 text-sm text-white outline-none transition focus:border-violet-400/60 focus:bg-white/[0.06]"
+                    >
+                      <option value="fixed">R$</option>
+                      <option value="percent">%</option>
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.16em] text-white/40">Valor</span>
+                    <input
+                      type="number"
+                      min="0"
+                      max={discountType === 'percent' ? 100 : undefined}
+                      step="0.01"
+                      value={discountValue}
+                      onChange={e => setDiscountValue(e.target.value)}
+                      placeholder={discountType === 'percent' ? '0%' : '0,00'}
+                      className="w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2.5 text-sm text-white outline-none transition placeholder:text-white/25 focus:border-violet-400/60 focus:bg-white/[0.06]"
+                    />
+                  </label>
                 </div>
                 <label className="mb-4 block">
                   <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.16em] text-white/40">Cliente</span>
